@@ -8,8 +8,8 @@ the assistant you use. One library and one sync serve both.
 
 ![The Super Student dashboard: your courses, what's due, search, and the study pass](docs/screenshots/dashboard.png)
 
-**Get the Mac app:** download `SuperStudent-1.6.0-mac.zip` from the [latest release](../../releases/latest), then follow
-[Install the Mac app](#install-the-mac-app-no-terminal-needed). You need a Mac with macOS 11 or newer, the ChatGPT
+**Get the Mac app:** [download SuperStudent-1.6.0-mac.zip](https://github.com/Marc-Melone/super-student/raw/main/releases/SuperStudent-1.6.0-mac.zip)
+(also in the [`releases`](releases) folder), then follow [Install the Mac app](#install-the-mac-app-no-terminal-needed). You need a Mac with macOS 11 or newer, the ChatGPT
 or Claude desktop app, and a Canvas account that lets students make access tokens. It's a personal tool: one
 student, their own courses, on their own Mac.
 
