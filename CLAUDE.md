@@ -6,11 +6,29 @@ study them like someone who studied every slide: everything is converted to text
 (MCP server) plus skills let the AI search, read, view pages and run a "study pass". It ships as a Mac app
 (non-technical students), a Terminal installer, and a CLI. Owner: Marc. Current version: 1.6.0.
 
-## Status (Oct 2026)
+## Working with Marc
 
-- 1.6.0 is finished: four independent reviews (conversion pipeline, Canvas API, AI layer, Mac app/installer)
-  and all their findings are fixed. 394 automated checks pass on Python 3.12.
-- Not yet done:
+- Start every reply with "Marc". He's not a developer: plain language, short updates, no jargon unless he uses it.
+- Accuracy, depth and detail come first; token efficiency second, never at quality's cost.
+- Ask before big or hard-to-undo changes; give time estimates when he asks "how long".
+- Suggested effort: `high` for normal work on this codebase, `xhigh` for long unattended builds, `max` for
+  independent reviews (especially anything touching the Canvas token).
+
+## Status (2 Oct 2026)
+
+- 1.6.0 is finished and published: four independent reviews (conversion pipeline, Canvas API, AI layer, Mac
+  app/installer), all findings fixed. 395 automated checks pass on Python 3.12. The Mac app zip is committed in
+  `releases/` (this session type couldn't create GitHub Releases).
+- Repo: github.com/Marc-Melone/super-student, currently **public**. Marc is considering making it private and
+  sharing only with friends (collaborators, or sending them the zip directly). Nobody had forked or starred it.
+- Website: `docs/` is a plain-language landing page for GitHub Pages (`docs/index.html`, one self-contained file,
+  Atkinson Hyperlegible + Source Serif 4, colors from the app icon). It currently shows **"Coming soon"** instead
+  of download buttons and has no GitHub link. Pages is **not turned on yet**; Marc does that himself in
+  Settings, Pages, Deploy from a branch, `main` + `/docs` (free accounts need a public repo for Pages; GitHub Pro
+  allows Pages from a private repo, but the site itself is still public). To launch, put the download buttons back
+  (link: `https://github.com/Marc-Melone/super-student/raw/main/releases/SuperStudent-<version>-mac.zip`) and update
+  the version number on every release. The README links to `https://marc-melone.github.io/super-student/`.
+- Not yet verified:
   1. Run the Mac app on a real Mac. It was only run end to end under bash 3.2 on Linux. Check:
      - first-time setup, opening it straight from Downloads, an update over an open 1.5/1.6 window
      - the token saved to the Keychain through `security -i`
@@ -23,6 +41,39 @@ study them like someone who studied every slide: everything is converted to text
      - block-editor pages
      - media-object caption track URLs
   3. Optional: rerun the suites on Python 3.13.
+
+## Roadmap discussed (nothing started; wait for Marc to pick)
+
+Estimates are Claude working time.
+
+- **First:** GitHub Actions macOS CI (~2 h). GitHub's Mac runners may not expose Metal, so mlx may still need a
+  real Mac. Signing + notarization (Apple developer account, $99/yr) and an in-app update check.
+- **Quality**
+  - #8 Better transcripts by default (~2–3 h). Install mlx-whisper (large-v3-turbo) by default on Apple Silicon; it
+    already works as an opt-in backend. Feed course vocabulary from slides into Whisper's `initial_prompt`. Test
+    whether Intel Macs can afford more than `small.en`. The first run downloads ~1.6 GB.
+  - #7 Search by meaning (~1 day). A small local embedding model (~100 MB, e.g. fastembed/ONNX) alongside FTS5,
+    merged results, re-embedding only changed chunks, a question set proving it helps. Check onnxruntime wheels for
+    Intel Macs. Benefit is mostly for searches typed in the app; the AI already retries with synonyms (the skill
+    tells it to), uses porter stemming, and falls back from all-words to some-words.
+  - #9 Math in PDFs. Recommended light version (~½ day): detect scrambled equations, flag those pages to view as
+    images, and have the study pass write them out as LaTeX in the notes. A bundled equation-OCR model (2–3 days,
+    several hundred MB) was rejected: its errors are silent.
+- **Content:** Panopto/Kaltura/YuJa captions, New Quizzes, Google Docs/Slides export.
+- **Usability:** study pass reminders, Windows.
+- **Code health:** split `sync.py`.
+- **Blackboard** (~4–6 days plus testing on a real account). Students can't make API keys on Blackboard: the
+  official REST API needs an Anthology-registered app approved by each school's admin. The practical route is
+  sign-in inside the app, reading through the user's session. That route is fragile with SSO/MFA and has
+  acceptable-use risk. About 70% of the app (conversion, index, MCP, study pass) is reusable after separating
+  the Canvas-specific parts. Cheaper option: users drop downloaded files into `My Files`.
+- **Monetization (Marc's thinking, undecided):**
+  - Advice given: test free with 20–50 classmates through a semester first, and use it as a portfolio piece for
+    his finance job search.
+  - If that works, a free core plus a paid "Pro" tier that stays local, sold as a semester pass.
+  - Avoid a cloud version: holding tokens and copyrighted course files.
+  - Competitors are school-enabled: Claude for Education's Canvas LTI with Panopto/Wiley, and Instructure +
+    OpenAI's LLM-enabled assignments. 1.6.0 is MIT and stays MIT.
 
 ## Layout
 
@@ -71,7 +122,7 @@ python3.12 -m venv .venv && . .venv/bin/activate
 pip install -e '.[media,gui]'          # brew install tesseract libreoffice   (optional: OCR and exact slide images)
 export SS_TEST_DIR="$PWD/.testwork"
 python tests/test_e2e.py            # 87 checks: full sync against the fake Canvas, search, connector
-python tests/test_review_fixes.py   # 123 checks: everything fixed in 1.6
+python tests/test_review_fixes.py   # 124 checks: everything fixed in 1.6
 python tests/test_visuals.py        # 40
 python tests/test_study.py          # 59
 python tests/test_gui.py            # 67 (app server; SUPERSTUDENT_APP_DRYRUN)
