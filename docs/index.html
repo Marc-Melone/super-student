@@ -1,0 +1,484 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Super Student: study your Canvas courses with your AI</title>
+<meta name="description" content="A free Mac app that copies your Canvas courses onto your Mac and connects them to Claude or ChatGPT, so your AI can answer from your actual slides, readings and lectures.">
+<meta property="og:title" content="Super Student">
+<meta property="og:description" content="Your Canvas courses, on your Mac, ready for Claude or ChatGPT to study from.">
+<meta property="og:image" content="screenshots/dashboard.png">
+<link rel="icon" type="image/png" href="favicon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:ital,wght@0,400;0,700;1,400&family=Source+Serif+4:opsz,wght@8..60,600;8..60,700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --ink: #1E2A4A;
+    --ink-soft: #4A5572;
+    --desk: #F3F5FA;
+    --page: #FFFFFF;
+    --line: #DCE1EC;
+    --blue: #2A45C8;
+    --blue-dark: #1F36A3;
+    --highlight: #FFE252;
+    --tab-amber: #F2C46D;
+    --tab-coral: #EF9C8C;
+    --green: #2F7D52;
+    --serif: "Source Serif 4", Georgia, serif;
+    --sans: "Atkinson Hyperlegible", system-ui, -apple-system, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    background: var(--desk);
+    color: var(--ink);
+    font: 18px/1.6 var(--sans);
+    -webkit-font-smoothing: antialiased;
+  }
+  img { max-width: 100%; height: auto; display: block; }
+  a { color: var(--blue); }
+  a:focus-visible, button:focus-visible, summary:focus-visible {
+    outline: 3px solid var(--blue);
+    outline-offset: 3px;
+    border-radius: 6px;
+  }
+  .wrap { max-width: 1120px; margin: 0 auto; padding: 0 24px; }
+  h1, h2, h3 { font-family: var(--serif); font-weight: 700; line-height: 1.15; margin: 0; }
+  h2 { font-size: clamp(1.9rem, 3.4vw, 2.5rem); letter-spacing: -0.01em; }
+  h3 { font-size: 1.3rem; font-weight: 600; }
+  p { margin: 0; }
+
+  /* Header */
+  .top { display: flex; align-items: center; justify-content: space-between; padding: 20px 0; }
+  .brand { display: flex; align-items: center; gap: 12px; font: 700 1.25rem var(--serif); color: var(--ink); text-decoration: none; }
+  .brand img { width: 40px; height: 40px; }
+  .top nav { display: flex; gap: 28px; align-items: center; font-size: 1rem; }
+  .top nav a { color: var(--ink-soft); text-decoration: none; }
+  .top nav a:hover { color: var(--ink); text-decoration: underline; }
+  .top nav a.button, .top nav a.button:hover { color: #fff; text-decoration: none; }
+
+  .button {
+    display: inline-flex; align-items: center; gap: 10px;
+    background: var(--blue); color: #fff; text-decoration: none;
+    font: 700 1.05rem var(--sans); padding: 14px 24px; border-radius: 10px;
+  }
+  .button:hover { background: var(--blue-dark); }
+  .button svg { width: 20px; height: 20px; flex: none; }
+  .top .button { padding: 10px 18px; font-size: 0.95rem; }
+
+  /* Hero */
+  .hero { display: grid; grid-template-columns: 1fr 1.05fr; gap: 56px; align-items: center; padding: 48px 0 96px; }
+  .hero h1 { font-size: clamp(2.5rem, 5.2vw, 4rem); letter-spacing: -0.02em; }
+  .hero .lede { font-size: 1.2rem; color: var(--ink-soft); margin: 24px 0 32px; max-width: 34em; }
+  .fine { font-size: 0.95rem; color: var(--ink-soft); margin-top: 16px; max-width: 32em; }
+
+  /* The demo: a question, an answer with sources, and the slide it came from */
+  .demo { position: relative; }
+  .chat {
+    background: var(--page); border: 1px solid var(--line); border-radius: 18px;
+    padding: 24px 24px 44px; box-shadow: 0 24px 48px -28px rgba(30, 42, 74, 0.35);
+    position: relative; z-index: 1;
+  }
+  .ask {
+    margin-left: auto; width: fit-content; max-width: 85%;
+    background: var(--desk); border-radius: 16px 16px 4px 16px; padding: 12px 16px; font-size: 1rem;
+  }
+  .answer { margin-top: 20px; font-size: 1rem; }
+  .answer p + p { margin-top: 12px; }
+  .src {
+    display: inline-block; font-size: 0.8rem; font-weight: 700; line-height: 1.4;
+    padding: 1px 8px; border-radius: 6px 6px 0 0; border-bottom: 2px solid var(--ink);
+    background: var(--tab-coral); color: var(--ink); white-space: nowrap; vertical-align: 1px;
+  }
+  .src.amber { background: var(--tab-amber); }
+  .slide {
+    position: relative; z-index: 2; margin: -24px -12px 0 auto; width: 76%;
+    background: var(--page); border: 1px solid var(--line); border-radius: 12px;
+    box-shadow: 0 28px 50px -24px rgba(30, 42, 74, 0.45); overflow: hidden;
+    transform: rotate(1.5deg);
+  }
+  .slide-head {
+    display: flex; justify-content: space-between; gap: 12px;
+    font-size: 0.8rem; color: var(--ink-soft); padding: 8px 14px; border-bottom: 1px solid var(--line); background: var(--desk);
+  }
+  .slide-body { padding: 16px 18px 20px; }
+  .slide-body strong { font: 600 1.1rem var(--serif); display: block; margin-bottom: 8px; }
+  .slide-body ul { margin: 0; padding-left: 20px; font-size: 0.92rem; line-height: 1.7; }
+  .marked {
+    background-image: linear-gradient(var(--highlight), var(--highlight));
+    background-repeat: no-repeat; background-size: 100% 88%; background-position: 0 60%;
+    padding: 0 3px; margin: 0 -3px;
+    animation: mark 0.9s 0.6s cubic-bezier(0.6, 0, 0.3, 1) both;
+  }
+  @keyframes mark { from { background-size: 0% 88%; } to { background-size: 100% 88%; } }
+  @media (prefers-reduced-motion: reduce) { .marked { animation: none; } html { scroll-behavior: auto; } }
+
+  /* Sections */
+  section { padding: 88px 0; }
+  .band { background: var(--page); border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+  .intro { max-width: 40em; margin-bottom: 48px; }
+  .intro p { color: var(--ink-soft); margin-top: 16px; font-size: 1.1rem; }
+
+  .three { display: grid; grid-template-columns: repeat(3, 1fr); gap: 48px; }
+  .three h3 { margin-bottom: 10px; }
+  .three p { color: var(--ink-soft); }
+  .three .tab {
+    display: inline-block; width: 44px; height: 8px; border-radius: 4px; margin-bottom: 16px; background: var(--tab-amber);
+  }
+  .three div:nth-child(2) .tab { background: var(--tab-coral); }
+  .three div:nth-child(3) .tab { background: var(--highlight); }
+
+  .copied { display: grid; grid-template-columns: 1fr 1fr; gap: 0 56px; margin-top: 64px; padding: 0; list-style: none; }
+  .copied li { padding: 14px 0; border-top: 1px solid var(--line); }
+  .copied b { display: block; }
+  .copied span { color: var(--ink-soft); font-size: 1rem; }
+
+  figure { margin: 0; }
+  .shot { border-radius: 14px; border: 1px solid var(--line); box-shadow: 0 30px 60px -36px rgba(30, 42, 74, 0.5); }
+  figcaption { color: var(--ink-soft); font-size: 0.95rem; margin-top: 14px; }
+
+  /* Steps */
+  .steps { list-style: none; margin: 0; padding: 0; counter-reset: step; }
+  .steps > li {
+    counter-increment: step; display: grid; grid-template-columns: 64px 1fr; gap: 0 24px;
+    padding: 32px 0; border-top: 1px solid var(--line);
+  }
+  .steps > li::before {
+    content: counter(step); font: 700 2.4rem/1 var(--serif); color: var(--blue);
+  }
+  .steps h3 { margin-bottom: 8px; }
+  .steps p, .steps li li { color: var(--ink-soft); }
+  .steps p + p, .steps p + ul { margin-top: 10px; }
+  .steps ul { padding-left: 20px; margin: 10px 0 0; }
+  .steps .step-media { grid-column: 2; margin-top: 20px; max-width: 640px; }
+  .note {
+    margin-top: 14px; padding: 14px 18px; background: #FFF8D6; border-left: 4px solid var(--highlight);
+    border-radius: 0 8px 8px 0; color: var(--ink); font-size: 1rem;
+  }
+  .note p + p { margin-top: 6px; }
+  .menu { font-weight: 700; color: var(--ink); }
+
+  /* Things to ask */
+  .asks { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; list-style: none; padding: 0; margin: 0; }
+  .asks li {
+    background: var(--desk); border-radius: 16px 16px 16px 4px; padding: 16px 20px; font-size: 1.05rem;
+  }
+  .asks-after { margin-top: 28px; color: var(--ink-soft); max-width: 44em; }
+
+  /* Privacy */
+  .facts { display: grid; grid-template-columns: repeat(3, 1fr); gap: 40px; }
+  .facts p { color: var(--ink-soft); margin-top: 8px; }
+
+  /* FAQ */
+  .faq { max-width: 50em; }
+  details { border-top: 1px solid var(--line); }
+  details:last-child { border-bottom: 1px solid var(--line); }
+  summary {
+    cursor: pointer; list-style: none; padding: 20px 40px 20px 0; position: relative;
+    font: 600 1.15rem var(--serif);
+  }
+  summary::-webkit-details-marker { display: none; }
+  summary::after {
+    content: "+"; position: absolute; right: 4px; top: 16px; font: 400 1.6rem var(--sans); color: var(--blue);
+  }
+  details[open] summary::after { content: "–"; }
+  details > div { padding: 0 0 22px; color: var(--ink-soft); }
+  details > div p + p { margin-top: 10px; }
+
+  /* Closing */
+  .closing { text-align: left; display: flex; justify-content: space-between; align-items: center; gap: 32px; flex-wrap: wrap; }
+  .closing p { color: var(--ink-soft); margin-top: 10px; }
+  footer { padding: 40px 0 56px; color: var(--ink-soft); font-size: 0.9rem; border-top: 1px solid var(--line); }
+  footer p + p { margin-top: 6px; }
+
+  @media (max-width: 900px) {
+    .hero { grid-template-columns: 1fr; gap: 48px; padding-bottom: 64px; }
+    .three, .facts { grid-template-columns: 1fr; gap: 32px; }
+    .copied, .asks { grid-template-columns: 1fr; }
+    .top nav a:not(.button) { display: none; }
+  }
+  @media (max-width: 560px) {
+    body { font-size: 17px; }
+    .wrap { padding: 0 16px; }
+    section { padding: 64px 0; }
+    .slide { width: 92%; margin-right: 0; }
+    .steps > li { grid-template-columns: 40px 1fr; gap: 0 14px; }
+    .steps > li::before { font-size: 1.8rem; }
+    .steps .step-media { grid-column: 1 / -1; }
+  }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <header class="top">
+    <a class="brand" href="#"><img src="icon.png" alt="">Super Student</a>
+    <nav>
+      <a href="#how">How it works</a>
+      <a href="#start">Get started</a>
+      <a href="#faq">Questions</a>
+      <a class="button" href="https://github.com/Marc-Melone/super-student/raw/main/releases/SuperStudent-1.6.0-mac.zip">Download</a>
+    </nav>
+  </header>
+
+  <main>
+  <div class="hero">
+    <div>
+      <h1>Your AI, studied up on every one of your courses.</h1>
+      <p class="lede">Super Student copies your Canvas courses onto your Mac and connects them to Claude or ChatGPT.
+        Ask about a lecture, a reading or the midterm, and the answer comes from your actual course materials,
+        with the exact slide, page or minute it came from.</p>
+      <a class="button" href="https://github.com/Marc-Melone/super-student/raw/main/releases/SuperStudent-1.6.0-mac.zip">
+        <svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M10 3v10m0 0l-4-4m4 4l4-4M4 16h12" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        Download for Mac
+      </a>
+      <p class="fine">Free. Version 1.6.0, for macOS 11 or newer on any Mac. Works with the Claude and ChatGPT desktop apps.</p>
+    </div>
+
+    <div class="demo" aria-label="Example: asking your AI about a course">
+      <div class="chat">
+        <p class="ask">What do I need to know about duration for the midterm?</p>
+        <div class="answer">
+          <p>Your professor said duration will be on the midterm and the questions will be calculations, not
+            definitions <span class="src">Lecture 6 recording, 32:10</span></p>
+          <p>Start with the formula on <span class="src">Lecture 6, slide 14</span>, then redo problem 3 from
+            <span class="src amber">Problem Set 2</span>, where you lost two points on the same idea.</p>
+        </div>
+      </div>
+      <div class="slide" aria-hidden="true">
+        <div class="slide-head"><span>FIN 6100 · Lecture 6.pdf</span><span>Slide 14</span></div>
+        <div class="slide-body">
+          <strong>Macaulay duration</strong>
+          <ul>
+            <li>Weighted average time to receive cash flows</li>
+            <li><span class="marked">Price falls about D ÷ (1 + y) % per 1% rise in yield</span></li>
+            <li>Longer maturity, lower coupon: higher duration</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+  </div>
+  </main>
+</div>
+
+<section class="band" id="how">
+  <div class="wrap">
+    <div class="intro">
+      <h2>Like a study partner who read everything</h2>
+      <p>Normally your AI only knows what you paste into the chat. Super Student gives it the whole course,
+        kept up to date, so it can answer the way someone who did every reading and watched every lecture would.</p>
+    </div>
+    <div class="three">
+      <div>
+        <span class="tab"></span>
+        <h3>Everything from Canvas, on your Mac</h3>
+        <p>Slides, readings, assignments, lecture videos, announcements and grades are copied into a folder on
+          your Mac. Lectures are turned into text right on your computer.</p>
+      </div>
+      <div>
+        <span class="tab"></span>
+        <h3>Answers that show their source</h3>
+        <p>Every answer can point to the slide, page or minute it came from. Your AI can also look at the real
+          slide when a chart, diagram or formula matters.</p>
+      </div>
+      <div>
+        <span class="tab"></span>
+        <h3>Stays up to date by itself</h3>
+        <p>Every few hours it checks Canvas for anything new. If your professor deletes or replaces a file,
+          your copy is kept in a separate dated folder so old material never gets mixed in.</p>
+      </div>
+    </div>
+
+    <ul class="copied" aria-label="What Super Student copies">
+      <li><b>Slides and PDFs</b><span>Page by page and slide by slide, including speaker notes and words inside pictures</span></li>
+      <li><b>Lecture recordings</b><span>Turned into text with timestamps, plus a snapshot whenever the screen changes</span></li>
+      <li><b>Assignments and feedback</b><span>Instructions, rubrics, your scores and your professor's comments</span></li>
+      <li><b>Past quizzes</b><span>Your answers, and the correct ones when your professor has released them</span></li>
+      <li><b>Announcements and discussions</b><span>With your professor's replies marked</span></li>
+      <li><b>Exam hints</b><span>Everything your professor said about exams, gathered in one place with sources</span></li>
+    </ul>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <figure>
+      <img class="shot" src="screenshots/dashboard.png" width="1100" height="640"
+        alt="The Super Student window: your courses with what's due next, a search box, and whether Claude and ChatGPT are connected">
+      <figcaption>The Super Student window shows each course, what's due next, search across everything, and whether
+        your AI apps are connected.</figcaption>
+    </figure>
+  </div>
+</section>
+
+<section class="band" id="start">
+  <div class="wrap">
+    <div class="intro">
+      <h2>Get started in about 15 minutes</h2>
+      <p>No Terminal and no technical setup. You'll need a Mac, the Claude or ChatGPT desktop app, and your
+        Canvas login.</p>
+    </div>
+    <ol class="steps">
+      <li>
+        <div>
+          <h3>Download and unzip</h3>
+          <p><a href="https://github.com/Marc-Melone/super-student/raw/main/releases/SuperStudent-1.6.0-mac.zip">Download Super Student</a>.
+            Double-click the downloaded file to unzip it if your Mac didn't already, then drag <b>Super Student</b> into your Applications folder.</p>
+        </div>
+      </li>
+      <li>
+        <div>
+          <h3>Open it the first time</h3>
+          <p>Super Student isn't from the App Store, so your Mac asks you to confirm the first time you open it.</p>
+          <div class="note">
+            <p><b>On macOS 15 (Sequoia) or newer:</b> open the app, click <span class="menu">Done</span>, then go to
+              <span class="menu">System Settings</span> › <span class="menu">Privacy &amp; Security</span>, scroll down and click
+              <span class="menu">Open Anyway</span> next to the Super Student message. Open the app again.</p>
+            <p><b>On macOS 14 or older:</b> hold Control, click the app, choose <span class="menu">Open</span>, then
+              <span class="menu">Open</span> again.</p>
+          </div>
+        </div>
+      </li>
+      <li>
+        <div>
+          <h3>Click Set up and follow along</h3>
+          <p>The app downloads what it needs (about 300 MB, 3 to 10 minutes), then walks you through it:</p>
+          <ul>
+            <li>Find your school's Canvas</li>
+            <li>Make a Canvas access key. A button opens the right Canvas page, and the app shows you what to click.</li>
+            <li>Pick your courses</li>
+            <li>Choose Claude, ChatGPT or both</li>
+          </ul>
+        </div>
+        <figure class="step-media">
+          <img class="shot" src="screenshots/setup-courses.png" width="1100" height="780" loading="lazy"
+            alt="The setup window on the Pick your courses step, with Fixed Income and Econometrics ticked">
+        </figure>
+      </li>
+      <li>
+        <div>
+          <h3>Restart your AI app and ask away</h3>
+          <p>Quit Claude or ChatGPT completely and open it again so it notices Super Student. Then start a new chat
+            and ask about any of your courses.</p>
+        </div>
+      </li>
+    </ol>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <div class="intro">
+      <h2>Things to ask</h2>
+      <p>Talk to it the way you'd talk to a classmate who never missed a class.</p>
+    </div>
+    <ul class="asks">
+      <li>What's on the midterm, and what did the professor stress most?</li>
+      <li>Explain slide 14 from Lecture 6 like I've never seen it.</li>
+      <li>Make me a practice exam from weeks 3 to 6, with answers.</li>
+      <li>What did the professor say about the project in the last two lectures?</li>
+      <li>Where did I lose points on my assignments, and what should I fix?</li>
+      <li>What's due this week across all my classes?</li>
+    </ul>
+    <p class="asks-after">Before a big exam, use the <b>study pass</b> from the Super Student window. Your AI reads
+      every document and looks at every picture, saving notes as it goes, so its answers cover the whole
+      course and not only what a search turned up.</p>
+  </div>
+</section>
+
+<section class="band">
+  <div class="wrap">
+    <div class="intro"><h2>Your courses stay yours</h2></div>
+    <div class="facts">
+      <div>
+        <h3>It only reads</h3>
+        <p>Super Student never submits, posts or changes anything in Canvas. Like opening a page yourself, reading it
+          can mark it as viewed.</p>
+      </div>
+      <div>
+        <h3>Your access key stays locked up</h3>
+        <p>Your Canvas access key is kept in your Mac's Keychain and is only ever sent to your school's Canvas.</p>
+      </div>
+      <div>
+        <h3>Files stay on your Mac</h3>
+        <p>Your course copy lives in a folder on your Mac. Your AI app reads from it when you ask a question, the same
+          way it would read a file you shared with it.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="faq">
+  <div class="wrap faq">
+    <div class="intro"><h2>Questions</h2></div>
+
+    <details>
+      <summary>Does it cost anything?</summary>
+      <div><p>No. Super Student is free and open source. You use it with your own Claude or ChatGPT account.</p></div>
+    </details>
+    <details>
+      <summary>Which AI apps does it work with?</summary>
+      <div>
+        <p>The Claude desktop app and the ChatGPT desktop app on your Mac, plus Claude Code and Codex if you use them.
+          You can connect one or both.</p>
+        <p>AI in a web browser can't see files on your Mac. For that, click <b>Make exam pack</b> on a course in the
+          Super Student window and upload the pack to any chat.</p>
+      </div>
+    </details>
+    <details>
+      <summary>What's a Canvas access key, and what if I can't make one?</summary>
+      <div>
+        <p>It's what lets Super Student read your courses as you, without your password. You make it once in Canvas
+          (Account, then Settings), and the setup window shows you exactly where.</p>
+        <p>A few schools turn this off for students. If the button to make one is missing from your Canvas settings,
+          your school is one of them, and Super Student can't connect.</p>
+      </div>
+    </details>
+    <details>
+      <summary>Does it work on Windows, or on an iPad?</summary>
+      <div><p>Not yet. The app is Mac only, on macOS 11 or newer, on both Apple Silicon and Intel Macs.</p></div>
+    </details>
+    <details>
+      <summary>Is there anything it can't copy?</summary>
+      <div><p>Content that lives outside Canvas itself, like publisher homework sites, some video players and Canvas's
+        newer quiz tool. Each course lists those links so you know what's missing, and you can drop your own notes,
+        textbook PDFs or recordings into the course's <b>My Files</b> folder.</p></div>
+    </details>
+    <details>
+      <summary>How do I update to a new version?</summary>
+      <div><p>Download the new version from this page, drag it into Applications to replace the old one, and open it.
+        It updates itself, then reminds you to quit and reopen Claude or ChatGPT.</p></div>
+    </details>
+    <details>
+      <summary>How do I remove it?</summary>
+      <div><p>Open <b>Settings</b> in the Super Student window and choose <b>Uninstall</b>. It disconnects your AI apps and
+        removes what it installed. You decide whether to keep your course folder.</p></div>
+    </details>
+  </div>
+</section>
+
+<section class="band">
+  <div class="wrap closing">
+    <div>
+      <h2>Study with everything in front of you</h2>
+      <p>Free, for macOS 11 or newer.</p>
+    </div>
+    <a class="button" href="https://github.com/Marc-Melone/super-student/raw/main/releases/SuperStudent-1.6.0-mac.zip">
+      <svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M10 3v10m0 0l-4-4m4 4l4-4M4 16h12" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      Download for Mac
+    </a>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <p>Made by Marc Melone. Super Student is an independent project, not made by or affiliated with Instructure
+      (the makers of Canvas), Anthropic, OpenAI or any school.</p>
+    <p><a href="https://github.com/Marc-Melone/super-student">Source code and technical details on GitHub</a> · MIT license</p>
+  </div>
+</footer>
+
+</body>
+</html>
