@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "superstudent"
+version = "1.6.0"
+description = "Mirror your Canvas courses into a searchable study library for Claude and ChatGPT"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+dependencies = [
+  "requests>=2.28",
+  "beautifulsoup4>=4.11",
+  "markdownify>=0.13",
+  "pymupdf>=1.24",
+  "python-pptx>=0.6.22",
+  "mammoth>=1.6",
+  "openpyxl>=3.1",
+  "xlrd>=2.0",
+  "Pillow>=9.0",
+  "mcp>=1.6",
+  "youtube-transcript-api>=0.6",
+  # Apple's built-in text recognition (labels in diagrams, scans, lecture screens) on a Mac
+  "pyobjc-framework-Vision>=9; sys_platform == 'darwin'",
+  "pyobjc-framework-Quartz>=9; sys_platform == 'darwin'",
+]
+
+[project.optional-dependencies]
+media = ["faster-whisper>=1.1", "av>=11"]
+mlx = ["mlx-whisper>=0.4", "av>=11"]
+gui = ["pywebview>=5.0; sys_platform == 'darwin'"]
+
+[project.scripts]
+superstudent = "superstudent.cli:main"
+
+[tool.setuptools]
+packages = ["superstudent", "superstudent.gui"]
+
+[tool.setuptools.package-data]
+"superstudent.gui" = ["*.html", "*.png"]

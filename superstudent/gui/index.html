@@ -1,0 +1,1232 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Super Student</title>
+<style>
+:root {
+  --paper: #F5F7FA; --sheet: #FFFFFF; --sunk: #ECEFF4; --ink: #172033; --pencil: #596275; --faint: #8A92A3;
+  --rule: #DCE1E8; --blue: #2748C9; --blue-hover: #1D39A6; --blue-soft: #E7ECFC; --on-blue: #FFFFFF;
+  --hl: 255, 226, 82; --ok: #1C7A4F; --ok-soft: #E2F3E9; --warn: #8A5200; --warn-soft: #FFF2D4;
+  --bad: #B42318; --bad-soft: #FDE8E6;
+  --serif: ui-serif, "New York", "Iowan Old Style", "Palatino", Georgia, serif;
+  --sans: -apple-system, BlinkMacSystemFont, system-ui, "Helvetica Neue", Arial, sans-serif;
+  --lift: 0 1px 2px rgba(23, 32, 51, .05), 0 6px 20px rgba(23, 32, 51, .06);
+  color-scheme: light dark;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --paper: #13161C; --sheet: #1B1F28; --sunk: #222733; --ink: #E8EBF1; --pencil: #A6AEBE; --faint: #7B8394;
+    --rule: #2E3441; --blue: #8DA4FF; --blue-hover: #A8BAFF; --blue-soft: #222B48; --on-blue: #0D1328;
+    --ok: #5CCB94; --ok-soft: #16301F; --warn: #F2B75B; --warn-soft: #362A12; --bad: #FF8A7F; --bad-soft: #3B1C1A;
+    --lift: 0 1px 2px rgba(0, 0, 0, .3), 0 6px 20px rgba(0, 0, 0, .25);
+  }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--paper); color: var(--ink); }
+body { font: 15px/1.5 var(--sans); -webkit-font-smoothing: antialiased; }
+h1, h2 { font-family: var(--serif); font-weight: 600; letter-spacing: -.01em; margin: 0; }
+h1 { font-size: 34px; line-height: 1.15; }
+h2 { font-size: 23px; line-height: 1.25; }
+h3 { font-size: 15px; margin: 0 0 6px; }
+p { margin: 0 0 12px; }
+a { color: var(--blue); }
+[hidden] { display: none !important; }
+:focus-visible { outline: 2.5px solid var(--blue); outline-offset: 2px; border-radius: 6px; }
+[tabindex="-1"]:focus { outline: none; }
+@media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
+
+/* The highlighter: current step, search matches */
+.hl, mark {
+  color: #172033; border-radius: 3px; padding: 0 .18em; margin: 0 -.06em;
+  background: linear-gradient(100deg, rgba(var(--hl), 0) 0, rgba(var(--hl), .95) 4px, rgba(var(--hl), .7) 45%,
+    rgba(var(--hl), .9) calc(100% - 4px), rgba(var(--hl), 0) 100%);
+  -webkit-box-decoration-break: clone; box-decoration-break: clone;
+}
+
+/* Controls */
+.btn {
+  font: 600 14px/1.2 var(--sans); border-radius: 8px; padding: 9px 16px; border: 1px solid var(--rule);
+  background: var(--sheet); color: var(--ink); cursor: pointer; display: inline-flex; align-items: center;
+  gap: 8px; white-space: nowrap; text-decoration: none;
+}
+.btn:hover { background: var(--sunk); }
+.btn.primary { background: var(--blue); border-color: var(--blue); color: var(--on-blue); }
+.btn.primary:hover { background: var(--blue-hover); border-color: var(--blue-hover); }
+.btn.quiet { border-color: transparent; background: transparent; color: var(--blue); padding: 7px 8px; }
+.btn.quiet:hover { background: var(--blue-soft); }
+.btn.small { padding: 6px 11px; font-size: 13px; }
+.btn.danger { color: var(--bad); }
+.btn.destroy { background: var(--bad); border-color: var(--bad); color: #fff; }
+.btn.destroy:hover { background: var(--bad); filter: brightness(.92); }
+.btn:disabled { opacity: .5; cursor: default; }
+.btn.big { padding: 12px 22px; font-size: 15px; }
+input[type=text], input[type=password], input[type=search], select {
+  font: 15px/1.3 var(--sans); padding: 10px 12px; border: 1px solid var(--rule); border-radius: 8px;
+  background: var(--sheet); color: var(--ink); width: 100%; min-width: 0;
+}
+input:focus, select:focus { outline: none; border-color: var(--blue); box-shadow: 0 0 0 3px var(--blue-soft); }
+select { width: auto; padding-right: 30px; }
+input[type=checkbox] { accent-color: var(--blue); width: 17px; height: 17px; margin: 0; flex: none; }
+input.switch {
+  -webkit-appearance: none; appearance: none; width: 42px; height: 25px; border-radius: 13px; background: var(--rule);
+  position: relative; cursor: pointer; flex: none; transition: background .15s; margin: 0;
+}
+input.switch::after {
+  content: ""; position: absolute; top: 3px; left: 3px; width: 19px; height: 19px; border-radius: 50%;
+  background: #fff; box-shadow: 0 1px 3px rgba(0, 0, 0, .3); transition: transform .15s;
+}
+input.switch:checked { background: var(--blue); }
+input.switch:checked::after { transform: translateX(17px); }
+.field { margin: 22px 0; }
+.field > label, .label { display: block; font-weight: 600; margin-bottom: 7px; }
+.help { color: var(--pencil); font-size: 13.5px; margin: 7px 0 0; }
+.err { color: var(--bad); font-size: 14px; margin: 10px 0 0; min-height: 1px; }
+.err:empty { display: none; }
+.good { color: var(--ok); font-weight: 600; margin: 10px 0 0; }
+.row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.spacer { flex: 1; }
+.muted { color: var(--pencil); }
+.small { font-size: 13px; }
+.spin {
+  width: 16px; height: 16px; border-radius: 50%; border: 2px solid var(--rule); border-top-color: var(--blue);
+  animation: spin .8s linear infinite; flex: none; display: inline-block;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.pulse { width: 9px; height: 9px; border-radius: 50%; background: var(--blue); flex: none; animation: pulse 1.4s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: .3; } }
+
+/* Brand */
+.brand { display: flex; align-items: center; gap: 10px; font-family: var(--serif); font-size: 19px; font-weight: 600; }
+.brand svg { flex: none; }
+
+/* Setup: rail + stage */
+.wiz { display: grid; grid-template-columns: 248px minmax(0, 1fr); min-height: 100vh; }
+.rail { background: var(--sunk); border-right: 1px solid var(--rule); padding: 26px 22px; display: flex; flex-direction: column; }
+.steps { list-style: none; margin: 40px 0 0; padding: 0; }
+.steps li { display: flex; gap: 12px; align-items: center; padding: 9px 0; color: var(--faint); font-size: 14.5px; }
+.steps .num {
+  width: 24px; height: 24px; border-radius: 50%; border: 1.5px solid currentColor; display: grid; place-items: center;
+  font-size: 12px; font-weight: 700; flex: none;
+}
+.steps li.done { color: var(--pencil); }
+.steps li.done .num { background: var(--ok); border-color: var(--ok); color: #fff; }
+.steps li.now { color: var(--ink); font-weight: 600; }
+.steps li.now .num { border-color: var(--ink); }
+.rail-foot { margin-top: auto; font-size: 12.5px; color: var(--pencil); line-height: 1.45; }
+.stage { padding: 52px 60px 48px; max-width: 760px; width: 100%; }
+.stage h1 { margin-bottom: 14px; }
+.lede { font-size: 16.5px; color: var(--pencil); max-width: 60ch; }
+.nav { display: flex; gap: 10px; margin-top: 32px; align-items: center; }
+
+/* Welcome */
+.welcome { min-height: 100vh; display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, .95fr); }
+.welcome .intro { padding: 56px 56px 40px 64px; display: flex; flex-direction: column; }
+.welcome h1 { font-size: 42px; margin: 44px 0 16px; max-width: 17ch; }
+.welcome .lede { margin-bottom: 26px; }
+.needs { list-style: none; padding: 0; margin: 0 0 30px; }
+.needs li { padding: 5px 0 5px 26px; position: relative; }
+.needs li::before { content: ""; position: absolute; left: 2px; top: 13px; width: 11px; height: 2px; background: var(--faint); }
+.fine { font-size: 13px; color: var(--pencil); margin-top: 16px; max-width: 52ch; }
+.shelf { background: var(--sunk); border-left: 1px solid var(--rule); padding: 56px 44px; display: flex; flex-direction: column; justify-content: center; }
+.shelf .cap { color: var(--pencil); font-size: 13.5px; margin-bottom: 14px; }
+.tree { background: var(--sheet); border: 1px solid var(--rule); border-radius: 12px; padding: 16px 18px; box-shadow: var(--lift); font-size: 13.5px; }
+.tree .node { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 8px; align-items: center; padding: 4px 0; }
+.tree .node .name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.tree .node .why { grid-column: 2; color: var(--pencil); font-size: 12.5px; margin-top: -3px; }
+.tree svg { display: block; }
+
+/* Lists of choices */
+.choices { border: 1px solid var(--rule); border-radius: 12px; background: var(--sheet); overflow: hidden; }
+.choice { display: flex; gap: 14px; align-items: flex-start; padding: 13px 16px; border-top: 1px solid var(--rule); cursor: pointer; }
+.choice:first-child { border-top: 0; }
+.choice:hover { background: var(--paper); }
+.choice input { margin-top: 3px; }
+.choice .t { font-weight: 600; }
+.choice .s { color: var(--pencil); font-size: 13.5px; }
+.schools { margin-top: 12px; }
+.schools .choice { align-items: center; }
+
+/* Token steps */
+.howto { counter-reset: h; list-style: none; padding: 0; margin: 22px 0 0; }
+.howto > li { counter-increment: h; position: relative; padding: 0 0 18px 42px; }
+.howto > li::before {
+  content: counter(h); position: absolute; left: 0; top: -1px; width: 27px; height: 27px; border-radius: 50%;
+  background: var(--sheet); border: 1.5px solid var(--rule); display: grid; place-items: center; font-weight: 700; font-size: 13px;
+}
+.howto > li > div { margin-top: 10px; }
+.kbd { font-weight: 600; background: var(--sunk); border: 1px solid var(--rule); border-radius: 5px; padding: 0 5px; white-space: nowrap; }
+.tokenrow { display: flex; gap: 8px; max-width: 520px; }
+.aside { background: var(--sheet); border: 1px solid var(--rule); border-radius: 12px; padding: 14px 16px; font-size: 13.5px; color: var(--pencil); margin-top: 8px; }
+.aside strong { color: var(--ink); }
+details.more { margin-top: 12px; font-size: 14px; }
+details.more summary { cursor: pointer; color: var(--blue); font-weight: 600; }
+details.more p { color: var(--pencil); margin: 8px 0 0; }
+
+/* AI tiles */
+.tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.tile { border: 1.5px solid var(--rule); border-radius: 14px; padding: 18px; background: var(--sheet); cursor: pointer; display: flex; flex-direction: column; gap: 6px; }
+.tile.on { border-color: var(--blue); box-shadow: 0 0 0 3px var(--blue-soft); }
+.tile .head { display: flex; align-items: center; gap: 10px; }
+.tile .name { font-family: var(--serif); font-size: 20px; font-weight: 600; }
+.tile .maker { color: var(--pencil); font-size: 13px; }
+.pill { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 600; border-radius: 99px; padding: 2px 9px; }
+.pill.ok { background: var(--ok-soft); color: var(--ok); }
+.pill.warn { background: var(--warn-soft); color: var(--warn); }
+.pill.off { background: var(--sunk); color: var(--pencil); }
+.dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+
+/* Options */
+.opt { display: flex; gap: 16px; align-items: flex-start; padding: 18px 0; border-top: 1px solid var(--rule); }
+.opt:first-of-type { border-top: 0; }
+.opt .txt { flex: 1; }
+.opt .t { font-weight: 600; }
+.opt .s { color: var(--pencil); font-size: 13.5px; margin-top: 3px; }
+.opt .sub { margin-top: 10px; }
+
+/* Checklist */
+.checks { list-style: none; padding: 0; margin: 26px 0 0; }
+.checks li { display: grid; grid-template-columns: 22px minmax(0, 1fr); gap: 12px; padding: 11px 0; border-top: 1px solid var(--rule); align-items: start; }
+.checks li:first-child { border-top: 0; }
+.checks .mark { width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center; margin-top: 1px; }
+.checks .mark.ok { background: var(--ok); color: #fff; }
+.checks .mark.no { background: var(--warn-soft); color: var(--warn); font-weight: 800; }
+.checks .mark.wait { border: 2px solid var(--rule); }
+.checks .d { color: var(--pencil); font-size: 13.5px; overflow-wrap: anywhere; }
+
+/* Ready + guides */
+.guide { background: var(--sheet); border: 1px solid var(--rule); border-radius: 14px; padding: 20px 22px; margin-top: 18px; }
+.guide h2 { margin-bottom: 8px; }
+.guide ol { margin: 10px 0 14px; padding-left: 20px; }
+.guide ol li { margin: 6px 0; padding-left: 4px; }
+.guide .note { color: var(--pencil); font-size: 13.5px; }
+.prompts { list-style: none; padding: 0; margin: 10px 0 0; }
+.prompts li { display: flex; gap: 10px; align-items: flex-start; padding: 9px 0; border-top: 1px solid var(--rule); }
+.prompts li:first-child { border-top: 0; }
+.prompts .q { flex: 1; font-family: var(--serif); font-size: 15.5px; }
+
+/* Dashboard */
+.top { display: flex; align-items: center; gap: 14px; padding: 13px 26px; border-bottom: 1px solid var(--rule); background: var(--sheet); position: sticky; top: 0; z-index: 5; }
+.status { display: flex; align-items: center; gap: 9px; color: var(--pencil); font-size: 13.5px; min-width: 0; margin-left: 12px; }
+.status span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wrap { max-width: 1240px; margin: 0 auto; padding: 22px 26px 56px; }
+.banner { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; background: var(--warn-soft); color: var(--ink); border-radius: 12px; padding: 12px 14px 12px 16px; margin-bottom: 10px; }
+.banner .txt { flex: 1 1 280px; font-size: 14px; }
+.banner.bad { background: var(--bad-soft); }
+.searchbar { display: flex; gap: 10px; align-items: center; margin: 6px 0 4px; }
+.searchbar input { font-size: 16px; padding: 12px 14px 12px 40px; border-radius: 11px;
+  background: var(--sheet) no-repeat 14px 50%; }
+.searchbar .field-wrap { position: relative; flex: 1; }
+.searchbar .field-wrap svg { position: absolute; left: 14px; top: 50%; transform: translateY(-50%); color: var(--faint); pointer-events: none; }
+.grid { display: grid; grid-template-columns: minmax(0, 1fr) 336px; gap: 30px; margin-top: 20px; align-items: start; }
+.section-head { display: flex; align-items: baseline; gap: 12px; margin: 4px 0 2px; }
+.section-head h2 { font-size: 21px; }
+.courses { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px 16px; }
+.course { position: relative; background: var(--sheet); border: 1px solid var(--rule); border-radius: 3px 12px 12px 12px; padding: 16px 18px 14px; margin-top: 26px; display: flex; flex-direction: column; }
+.course .tab {
+  position: absolute; top: -24px; left: -1px; height: 24px; max-width: 70%; padding: 0 12px; border-radius: 8px 8px 0 0;
+  background: var(--c); color: #172033; font-size: 12.5px; font-weight: 700; display: flex; align-items: center;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.course::before { content: ""; position: absolute; left: -1px; top: -1px; bottom: -1px; width: 4px; background: var(--c); border-radius: 0 0 0 12px; }
+.course .name { font-family: var(--serif); font-size: 18px; font-weight: 600; line-height: 1.25; }
+.course .term { color: var(--pencil); font-size: 13px; margin-top: 2px; }
+.course .next { margin-top: 12px; font-size: 14px; display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 2px 8px; }
+.course .next .k { font-weight: 700; }
+.course .next .w { grid-column: 2; color: var(--pencil); font-size: 13px; }
+.course .counts { margin-top: 10px; color: var(--pencil); font-size: 13px; }
+.course .counts .wait { color: var(--warn); }
+.course .acts { display: flex; gap: 6px; margin-top: 12px; margin-left: -8px; flex-wrap: wrap; }
+.empty { background: var(--sheet); border: 1px dashed var(--rule); border-radius: 12px; padding: 26px; margin-top: 14px; }
+.side { position: sticky; top: 84px; display: flex; flex-direction: column; gap: 14px; }
+.panel { background: var(--sheet); border: 1px solid var(--rule); border-radius: 14px; padding: 16px 18px; }
+.panel h2 { font-size: 18px; margin-bottom: 8px; }
+.ai { display: flex; align-items: center; gap: 8px; padding: 10px 0; border-top: 1px solid var(--rule); }
+.ai:first-of-type { border-top: 0; }
+.ai .n { font-weight: 600; }
+.results { margin-top: 10px; }
+.meter { height: 8px; border-radius: 4px; background: var(--sunk); overflow: hidden; }
+.meter span { display: block; height: 100%; background: var(--ok); border-radius: 4px; min-width: 2px; }
+.hit { background: var(--sheet); border: 1px solid var(--rule); border-radius: 12px; padding: 14px 16px; margin-top: 10px; }
+.hit .h { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; }
+.hit .title { font-family: var(--serif); font-size: 16.5px; font-weight: 600; background: none; border: 0; padding: 0; color: var(--ink); cursor: pointer; text-align: left; }
+.hit .title:hover { color: var(--blue); text-decoration: underline; }
+.hit .loc { color: var(--pencil); font-size: 13px; }
+.hit .snip { margin: 7px 0 4px; font-size: 14px; line-height: 1.55; }
+.chip { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 700; padding: 1px 8px; border-radius: 5px; background: var(--c); color: #172033; }
+
+/* Sheets (dialogs) */
+.scrim { position: fixed; inset: 0; background: rgba(15, 20, 32, .38); display: flex; align-items: flex-start; justify-content: center; padding: 48px 20px; overflow-y: auto; z-index: 50; animation: fade .12s ease-out; }
+@keyframes fade { from { opacity: 0; } }
+.sheet { background: var(--sheet); border-radius: 16px; box-shadow: 0 20px 60px rgba(0, 0, 0, .28); width: 100%; max-width: 560px; animation: drop .16s ease-out; }
+.sheet.wide { max-width: 700px; }
+@keyframes drop { from { transform: translateY(-10px); opacity: .4; } }
+.sheet-head { display: flex; align-items: center; gap: 10px; padding: 20px 22px 6px; }
+.sheet-head h2 { flex: 1; font-size: 22px; }
+.sheet-body { padding: 8px 22px 22px; }
+.sheet-foot { display: flex; gap: 10px; justify-content: flex-end; margin-top: 20px; }
+.setgroup { padding: 18px 0; border-top: 1px solid var(--rule); }
+.setgroup:first-child { border-top: 0; padding-top: 6px; }
+.setgroup > h3 { font-size: 16px; font-family: var(--serif); margin-bottom: 10px; }
+.setrow { display: flex; align-items: center; gap: 14px; padding: 7px 0; }
+.setrow .txt { flex: 1; }
+.setrow .s { color: var(--pencil); font-size: 13px; }
+.radio { display: flex; gap: 10px; align-items: flex-start; padding: 5px 0; cursor: pointer; }
+.radio input { accent-color: var(--blue); margin-top: 4px; }
+.lines { font: 12.5px/1.5 ui-monospace, Menlo, monospace; background: var(--sunk); border-radius: 10px; padding: 12px; max-height: 320px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
+.list { margin: 0; padding-left: 18px; max-height: 340px; overflow: auto; }
+.list li { margin: 4px 0; overflow-wrap: anywhere; }
+.toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%) translateY(20px); background: #172033; color: #fff; padding: 11px 18px; border-radius: 10px; font-size: 14px; opacity: 0; pointer-events: none; transition: opacity .18s, transform .18s; z-index: 80; max-width: min(560px, 90vw); box-shadow: 0 8px 30px rgba(0, 0, 0, .25); }
+.toast.show { opacity: 1; transform: translateX(-50%); }
+.toast.bad { background: #8F1C12; }
+.loading { min-height: 100vh; display: grid; place-items: center; color: var(--pencil); }
+
+@media (max-width: 900px) {
+  .grid { grid-template-columns: 1fr; }
+  .side { position: static; }
+}
+@media (max-width: 760px) {
+  .wiz, .welcome { grid-template-columns: 1fr; }
+  .rail { flex-direction: row; align-items: center; padding: 14px 16px; border-right: 0; border-bottom: 1px solid var(--rule); }
+  .steps, .rail-foot { display: none; }
+  .stage, .welcome .intro { padding: 28px 16px; }
+  .welcome h1 { margin-top: 28px; font-size: 34px; }
+  .shelf { border-left: 0; border-top: 1px solid var(--rule); padding: 28px 16px; }
+  .tiles { grid-template-columns: 1fr; }
+  .top { padding: 10px 16px; flex-wrap: wrap; }
+  .status { order: 5; width: 100%; margin-left: 0; }
+  .wrap { padding: 16px 16px 40px; }
+  .searchbar { flex-wrap: wrap; }
+}
+</style>
+</head>
+<body>
+<div id="app"><div class="loading">Opening Super Student…</div></div>
+<div id="modals"></div>
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
+<script>
+"use strict";
+const TOKEN = "__SS_TOKEN__";
+const NATIVE = "__SS_NATIVE__" === "true";
+
+/* ------------------------------------------------------------------ basics */
+function el(tag, attrs, ...kids) {
+  const n = document.createElement(tag);
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (v === null || v === undefined || v === false) continue;
+    if (k === "class") n.className = v;
+    else if (k.startsWith("on") && typeof v === "function") n.addEventListener(k.slice(2), v);
+    else n.setAttribute(k, v === true ? "" : v);
+  }
+  for (const kid of kids.flat(Infinity)) {
+    if (kid === null || kid === undefined || kid === false) continue;
+    n.append(kid instanceof Node ? kid : document.createTextNode(String(kid)));
+  }
+  return n;
+}
+function svg(markup) { const t = document.createElement("template"); t.innerHTML = markup.trim(); return t.content.firstChild; }
+const ICON = {
+  mark: '<svg width="28" height="28" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="8" fill="#1E2A4A"/><rect x="8" y="6" width="16" height="20" rx="2" fill="#fff"/><rect x="10.5" y="9.5" width="11" height="1.8" rx=".9" fill="#C3CAD8"/><rect x="9.3" y="13.4" width="13.4" height="4.4" rx="1.2" fill="#FFE252"/><rect x="10.5" y="14.7" width="11" height="1.8" rx=".9" fill="#1E2A4A" opacity=".6"/><rect x="10.5" y="20.5" width="7.5" height="1.8" rx=".9" fill="#C3CAD8"/></svg>',
+  folder: '<svg width="18" height="18" viewBox="0 0 20 20" aria-hidden="true"><path d="M2 5.5A1.5 1.5 0 0 1 3.5 4h4l1.6 1.8h7.4A1.5 1.5 0 0 1 18 7.3v7.2a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 2 14.5z" fill="#7FA6E8"/></svg>',
+  doc: '<svg width="18" height="18" viewBox="0 0 20 20" aria-hidden="true"><path d="M5 2.5h6.5L15.5 6.5v11H5z" fill="#fff" stroke="#9AA3B5" stroke-width="1.2"/><path d="M7.5 9.5h5.5M7.5 12h5.5M7.5 14.5h3.5" stroke="#9AA3B5" stroke-width="1.2"/></svg>',
+  text: '<svg width="18" height="18" viewBox="0 0 20 20" aria-hidden="true"><path d="M5 2.5h6.5L15.5 6.5v11H5z" fill="#fff" stroke="#9AA3B5" stroke-width="1.2"/><rect x="6.6" y="7.6" width="7.6" height="3" rx=".8" fill="#FFE252"/><path d="M7.5 9.1h5.5M7.5 12h5.5M7.5 14.8h3.5" stroke="#596275" stroke-width="1.2"/></svg>',
+  play: '<svg width="18" height="18" viewBox="0 0 20 20" aria-hidden="true"><rect x="2.5" y="4" width="15" height="12" rx="2" fill="#E9A28F"/><path d="M8.5 7.5v5l4.2-2.5z" fill="#fff"/></svg>',
+  search: '<svg width="18" height="18" viewBox="0 0 20 20" aria-hidden="true"><circle cx="8.5" cy="8.5" r="5.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="m12.7 12.7 4.3 4.3" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>',
+  check: '<svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d="m2.5 6.2 2.3 2.3 4.7-5" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+};
+
+async function api(path, body) {
+  const opts = { method: body === undefined ? "GET" : "POST", headers: { "X-SS-Token": TOKEN } };
+  if (body !== undefined) { opts.headers["Content-Type"] = "application/json"; opts.body = JSON.stringify(body); }
+  try {
+    const r = await fetch(path, opts);
+    return await r.json();
+  } catch (e) {
+    return { ok: false, message: "Super Student stopped responding. Close this window and open the app again." };
+  }
+}
+
+let toastTimer = null;
+function toast(msg, bad) {
+  const t = document.getElementById("toast");
+  t.textContent = msg;
+  t.className = "toast show" + (bad ? " bad" : "");
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { t.className = "toast" + (bad ? " bad" : ""); }, bad ? 6000 : 3200);
+}
+
+async function copyText(text) {
+  let done = false;
+  try { await navigator.clipboard.writeText(text); done = true; } catch (e) { /* fall back below */ }
+  if (!done) {
+    const ta = el("textarea", { style: "position:fixed;top:0;left:0;opacity:0" });
+    ta.value = text; document.body.append(ta); ta.select();
+    try { document.execCommand("copy"); } catch (e) { /* ignore */ }
+    ta.remove();
+  }
+  toast("Copied. Paste it into ChatGPT or Claude.");
+}
+
+function openUrl(url) { return api("/api/open-url", { url }).then(r => { if (!r.ok) toast(r.message || "Couldn't open that link.", true); }); }
+function openPlace(which, folder) { return api("/api/open-place", { which, folder: folder || "" }).then(r => { if (!r.ok) toast(r.message || "Couldn't open that.", true); }); }
+
+const TAB_COLORS = ["#8FB3F0", "#86CFA8", "#F2A594", "#BBA6EE", "#F2C877", "#78C9CE", "#EFA6CA", "#BFCB75"];
+function courseColor(key) {
+  let h = 0;
+  for (const ch of String(key || "")) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  return TAB_COLORS[h % TAB_COLORS.length];
+}
+function plural(n, one, many) { return n + " " + (n === 1 ? one : (many || one + "s")); }
+function friendlyPath(p) {
+  if (!S) return p;
+  const home = S.library.home;
+  if (p === home + "/SuperStudent") return "SuperStudent, in your home folder";
+  return p.startsWith(home + "/") ? "~" + p.slice(home.length) : p;
+}
+function snippetNodes(text) {
+  // The app marks matches with \u0002 ... \u0003; show them highlighted, everything else as plain text.
+  return String(text || "").split(/[\u0002\u0003]/).map((part, i) => i % 2 ? el("mark", null, part) : part);
+}
+
+/* ------------------------------------------------------------------ state */
+let S = null;                 // what the app reports (GET /api/state)
+let view = "loading";
+let PROG = null;              // latest update progress
+let pollTimer = null;
+let lastStateAt = 0;
+let localAttention = [];      // problems noticed in this window (e.g. an update that stopped)
+
+async function refreshState() {
+  const s = await api("/api/state");
+  if (s && s.version) { S = s; lastStateAt = Date.now(); }
+  return S;
+}
+
+const W = {
+  step: "welcome", url: "", host: "", user: "", courses: null, coursesError: "", excluded: new Set(),
+  ai: { openai: false, claude: false }, auto: true, interval: 6, transcribe: true, library: "",
+  setupStarted: false, setupResult: null, syncStarted: false,
+};
+const STEPS = [
+  { id: "school", label: "Your school" },
+  { id: "token", label: "Canvas access" },
+  { id: "courses", label: "Courses" },
+  { id: "ai", label: "Your AI app" },
+  { id: "options", label: "Options" },
+  { id: "setup", label: "Set up" },
+];
+
+async function boot() {
+  await refreshState();
+  if (!S) {
+    document.getElementById("app").replaceChildren(el("div", { class: "loading" }, "Super Student didn't start properly. Close this window and open the app again."));
+    return;
+  }
+  if (!NATIVE) { api("/api/ping", {}); setInterval(() => api("/api/ping", {}), 10000); }
+  if (S.setup_complete) { view = "dashboard"; }
+  else {
+    W.url = S.canvas.url; W.host = S.canvas.host; W.user = S.canvas.user;
+    W.excluded = new Set(S.settings.excluded);
+    W.ai = { openai: S.assistants.openai.app_installed || S.assistants.openai.status !== "off",
+             claude: S.assistants.claude.app_installed || S.assistants.claude.status !== "off" };
+    W.interval = S.settings.interval; W.transcribe = S.settings.transcribe; W.library = S.library.path;
+    W.step = !S.canvas.url ? "welcome" : (!S.canvas.token_saved || S.canvas.rejected) ? "token" : "courses";
+    view = "wizard";
+  }
+  render();
+  setInterval(async () => {
+    if (view !== "dashboard" || document.hidden) return;
+    await refreshState();
+    if (S.sync.running) ensurePolling();
+    renderDashParts();
+  }, 45000);
+}
+
+function render() {
+  const app = document.getElementById("app");
+  if (view === "wizard") app.replaceChildren(renderWizard());
+  else if (view === "dashboard") { app.replaceChildren(renderDashboard()); renderDashParts(); if (S.sync.running) ensurePolling(); }
+  window.scrollTo(0, 0);
+}
+function brand() { return el("div", { class: "brand" }, svg(ICON.mark), "Super Student"); }
+
+/* ------------------------------------------------------------------ setup */
+function go(step) { W.step = step; render(); const h = document.querySelector(".stage h1, .welcome h1"); if (h) { h.setAttribute("tabindex", "-1"); h.focus({ preventScroll: true }); } }
+
+function renderWizard() {
+  if (W.step === "welcome") return stepWelcome();
+  if (W.step === "ready") return stepReady();
+  const idx = STEPS.findIndex(s => s.id === W.step);
+  const rail = el("nav", { class: "rail", "aria-label": "Setup steps" },
+    brand(),
+    el("ol", { class: "steps" }, STEPS.map((s, i) => el("li", { class: i < idx ? "done" : i === idx ? "now" : "", "aria-current": i === idx ? "step" : null },
+      el("span", { class: "num" }, i < idx ? svg(ICON.check) : String(i + 1)),
+      el("span", { class: i === idx ? "hl" : "" }, s.label)))),
+    el("p", { class: "rail-foot" }, "Super Student only reads from Canvas. Your files stay on this Mac, and your Canvas access is kept in your Mac's Keychain."));
+  const body = { school: stepSchool, token: stepToken, courses: stepCourses, ai: stepAI, options: stepOptions, setup: stepSetup }[W.step]();
+  return el("div", { class: "wiz" }, rail, el("main", { class: "stage" }, body));
+}
+
+function stepWelcome() {
+  const node = (icon, name, depth, why) => el("div", { class: "node", style: "padding-left:" + depth * 20 + "px" },
+    svg(ICON[icon]), el("span", { class: "name" }, name), why ? el("span", { class: "why" }, why) : null);
+  return el("div", { class: "welcome" },
+    el("main", { class: "intro" },
+      brand(),
+      el("h1", null, "Study from everything in your Canvas courses."),
+      el("p", { class: "lede" }, "Super Student copies your slides, readings, lecture recordings, assignments and announcements into one folder on this Mac, turns them into text, and keeps it up to date. Then ChatGPT or Claude can answer questions about your classes like a classmate who never missed a lecture."),
+      el("p", { class: "label" }, "You'll need"),
+      el("ul", { class: "needs" },
+        el("li", null, "About five minutes"),
+        el("li", null, "To be able to sign in to Canvas"),
+        el("li", null, "The ChatGPT or Claude app for Mac. You can download it during setup.")),
+      el("div", null, el("button", { class: "btn primary big", onclick: () => go("school") }, "Get started")),
+      el("p", { class: "fine" }, "Super Student only reads from Canvas. It never submits, posts or edits anything.")),
+    el("aside", { class: "shelf", "aria-label": "What your folder will look like" },
+      el("p", { class: "cap" }, "Your courses become a folder like this, updated automatically:"),
+      el("div", { class: "tree" },
+        node("folder", "SuperStudent", 0),
+        node("folder", "BIO 1010 - Introduction to Biology", 1),
+        node("text", "EXAM_INTEL.md", 2, "What's likely on each exam, gathered from announcements and review sheets"),
+        node("text", "CALENDAR.md", 2, "Every due date and quiz in one place"),
+        node("folder", "Modules", 2),
+        node("folder", "03 - Week 3 - Cell Membranes", 3),
+        node("doc", "Lecture 5 - Transport.pptx", 4),
+        node("text", "Lecture 5 - Transport.pptx.md", 4, "The text version your AI reads, slide by slide"),
+        node("play", "Lecture 5 recording (lecture video).md", 4, "What the professor said, with timestamps"))));
+}
+
+function stepSchool() {
+  const input = el("input", { type: "text", id: "addr", placeholder: "yourschool.instructure.com", autocomplete: "off", spellcheck: "false", autocapitalize: "off", "aria-describedby": "addr-help" });
+  input.value = W.host || "";
+  const err = el("p", { class: "err", role: "alert" });
+  const btn = el("button", { class: "btn primary", onclick: () => submit() }, "Continue");
+  async function submit(value) {
+    if (value !== undefined) input.value = value;
+    if (!input.value.trim()) { err.textContent = "Enter your Canvas address first."; input.focus(); return; }
+    btn.disabled = true; btn.textContent = "Checking…"; err.textContent = "";
+    const r = await api("/api/canvas/check", { address: input.value });
+    btn.disabled = false; btn.textContent = "Continue";
+    if (r.ok) { if (r.url !== W.url) { W.courses = null; } W.url = r.url; W.host = r.host; go("token"); }
+    else { err.textContent = r.message; input.focus(); }
+  }
+  input.addEventListener("keydown", e => { if (e.key === "Enter") submit(); });
+
+  const q = el("input", { type: "text", placeholder: "For example: University of Michigan", autocomplete: "off", "aria-label": "School name" });
+  const qerr = el("p", { class: "err", role: "alert" });
+  const results = el("div", { class: "schools" });
+  const qbtn = el("button", { class: "btn", onclick: find }, "Search");
+  async function find() {
+    qbtn.disabled = true; qerr.textContent = ""; results.replaceChildren(el("p", { class: "muted small" }, "Searching…"));
+    const r = await api("/api/canvas/find", { query: q.value });
+    qbtn.disabled = false; results.replaceChildren();
+    if (!r.ok) { qerr.textContent = r.message; return; }
+    results.append(el("div", { class: "choices" }, r.schools.map(s =>
+      el("button", { class: "choice", style: "width:100%;text-align:left;border-left:0;border-right:0;border-bottom:0;background:none;font:inherit;color:inherit", onclick: () => submit(s.domain) },
+        el("div", null, el("div", { class: "t" }, s.name || s.domain), el("div", { class: "s" }, s.domain))))));
+  }
+  q.addEventListener("keydown", e => { if (e.key === "Enter") find(); });
+  const finder = el("div", { class: "field", hidden: true },
+    el("label", null, "Your school's name"),
+    el("div", { class: "row", style: "flex-wrap:nowrap" }, q, qbtn), qerr, results,
+    el("p", { class: "help" }, "Not every school is listed. If yours isn't, copy the address from your browser instead."));
+  const toggle = el("button", { class: "btn quiet", style: "margin-left:-8px", onclick: () => { finder.hidden = !finder.hidden; toggle.textContent = finder.hidden ? "Search by school name instead" : "Hide school search"; if (!finder.hidden) q.focus(); } }, "Search by school name instead");
+
+  setTimeout(() => input.focus(), 50);
+  return [
+    el("h1", null, "Which Canvas does your school use?"),
+    el("p", { class: "lede" }, "Open Canvas in your web browser and look at the address at the top of the window. Type the first part here."),
+    el("div", { class: "field" },
+      el("label", { for: "addr" }, "Canvas address"),
+      input,
+      el("p", { class: "help", id: "addr-help" }, "It often ends in instructure.com, like school.instructure.com. Some schools use their own, like canvas.school.edu."),
+      err),
+    toggle, finder,
+    el("div", { class: "nav" }, el("button", { class: "btn", onclick: () => go("welcome") }, "Back"), el("span", { class: "spacer" }), btn),
+  ];
+}
+
+function tokenPanel(opts) {
+  // Used by setup and by "Reconnect Canvas". The token only ever lives in this field until it's sent to
+  // the app, which checks it with Canvas and saves it in the Keychain.
+  const host = opts.host, base = opts.url;
+  const field = el("input", { type: "password", id: "tok", autocomplete: "off", spellcheck: "false", autocapitalize: "off", placeholder: "Paste the token here", "aria-label": "Canvas access token" });
+  const show = el("button", { class: "btn small", type: "button", onclick: () => { field.type = field.type === "password" ? "text" : "password"; show.textContent = field.type === "password" ? "Show" : "Hide"; } }, "Show");
+  const err = el("p", { class: "err", role: "alert" });
+  const good = el("p", { class: "good", role: "status", hidden: true });
+  const btn = el("button", { class: "btn primary", onclick: connect }, "Connect");
+  async function connect() {
+    const value = field.value.trim();
+    if (!value) { err.textContent = "Paste the token from Canvas first."; field.focus(); return; }
+    btn.disabled = true; btn.textContent = "Checking with Canvas…"; err.textContent = "";
+    const r = await api("/api/canvas/connect", { url: base, token: value });
+    btn.disabled = false; btn.textContent = "Connect";
+    if (!r.ok) { err.textContent = r.message; field.focus(); field.select(); return; }
+    field.value = ""; field.disabled = true; btn.disabled = true;
+    good.hidden = false; good.textContent = r.name ? "Connected as " + r.name + "." : "Connected.";
+    setTimeout(() => opts.onConnected(r), 900);
+  }
+  field.addEventListener("keydown", e => { if (e.key === "Enter") connect(); });
+  setTimeout(() => field.focus(), 60);
+  return el("div", null,
+    el("ol", { class: "howto" },
+      el("li", null, "Open your Canvas settings. Sign in if Canvas asks.",
+        el("div", null, el("button", { class: "btn", onclick: () => openUrl(base + "/profile/settings") }, "Open Canvas settings"))),
+      el("li", null, "Scroll down to ", el("b", null, "Approved Integrations"), " and click ", el("span", { class: "kbd" }, "+ New Access Token"), "."),
+      el("li", null, "For ", el("b", null, "Purpose"), ", type Super Student. You can leave the expiration date empty, then click ", el("span", { class: "kbd" }, "Generate Token"), "."),
+      el("li", null, "Copy the long code Canvas shows you. Canvas only shows it once, so copy it before closing that window."),
+      el("li", null, "Paste it here and click Connect.",
+        el("div", { class: "tokenrow" }, field, show), err, good)),
+    el("div", { class: "aside" },
+      el("strong", null, "Why a token? "),
+      "It lets Super Student read your courses as you, without knowing your password. It's saved in your Mac's Keychain and only sent to " + host + ". It's for your own account and your own studying, so don't share it. To cut off access at any time, delete it in the same Canvas settings page."),
+    el("details", { class: "more" },
+      el("summary", null, "I don't see New Access Token"),
+      el("p", null, "Some schools turn off access tokens for students. Ask your school's IT help desk to allow Canvas access tokens for your account, then come back to this step.")),
+    el("div", { class: "nav" }, opts.back ? el("button", { class: "btn", onclick: opts.back }, "Back") : null, el("span", { class: "spacer" }), btn));
+}
+
+function stepToken() {
+  return [
+    el("h1", null, "Let Super Student read your courses"),
+    el("p", { class: "lede" }, "Canvas gives you a private code, called an access token, that you paste here once. It takes about a minute."),
+    tokenPanel({ host: W.host, url: W.url, back: () => go("school"), onConnected: r => { W.user = r.name; W.courses = null; go("courses"); } }),
+  ];
+}
+
+function stepCourses() {
+  const box = el("div", null);
+  const nav = el("div", { class: "nav" },
+    el("button", { class: "btn", onclick: () => go("token") }, "Back"), el("span", { class: "spacer" }),
+    el("button", { class: "btn primary", onclick: () => go("ai") }, "Continue"));
+  function draw() {
+    if (W.courses === null) { box.replaceChildren(el("p", { class: "row muted" }, el("span", { class: "spin" }), "Getting your courses from Canvas…")); return; }
+    if (W.coursesError) {
+      box.replaceChildren(el("p", { class: "err" }, W.coursesError), el("button", { class: "btn", onclick: () => { W.courses = null; W.coursesError = ""; load(); } }, "Try again"));
+      return;
+    }
+    if (!W.courses.length) {
+      box.replaceChildren(el("div", { class: "aside" }, "Canvas doesn't list any current courses for you yet. You can finish setup now; courses are added automatically when they start."));
+      return;
+    }
+    const all = el("button", { class: "btn quiet small", style: "margin-left:-8px", onclick: () => { const none = W.excluded.size === 0; W.excluded = new Set(none ? W.courses.map(c => c.id) : []); draw(); } },
+      W.excluded.size === 0 ? "Deselect all" : "Select all");
+    box.replaceChildren(all, el("div", { class: "choices" }, W.courses.map(c => {
+      const cb = el("input", { type: "checkbox", checked: !W.excluded.has(c.id) });
+      cb.addEventListener("change", () => { cb.checked ? W.excluded.delete(c.id) : W.excluded.add(c.id); all.textContent = W.excluded.size === 0 ? "Deselect all" : "Select all"; });
+      return el("label", { class: "choice" }, cb, el("div", null, el("div", { class: "t" }, c.name), el("div", { class: "s" }, [c.code, c.term].filter(Boolean).join(", "))));
+    })));
+  }
+  async function load() {
+    draw();
+    const r = await api("/api/canvas/courses");
+    if (!r.ok) { W.coursesError = r.message; W.courses = []; }
+    else { W.courses = r.courses; W.coursesError = ""; W.courses.forEach(c => { if (!c.included) W.excluded.add(c.id); }); }
+    draw();
+  }
+  if (W.courses === null) load(); else draw();
+  return [
+    el("h1", null, "Pick your courses"),
+    el("p", { class: "lede" }, (W.user ? "Connected as " + W.user + ". " : "") + "These are the courses you're in right now. Untick any you don't want copied. New courses are added automatically each term."),
+    box, nav,
+  ];
+}
+
+const APPS = {
+  openai: { name: "ChatGPT", maker: "by OpenAI", about: "Ask questions in the ChatGPT app. It can read your whole course folder when you add it to a project." },
+  claude: { name: "Claude", maker: "by Anthropic", about: "Ask questions in the Claude app. It searches your courses, reads slides and checks due dates on its own." },
+};
+function stepAI() {
+  const tiles = ["openai", "claude"].map(key => {
+    const a = S.assistants[key], meta = APPS[key];
+    const cb = el("input", { type: "checkbox", checked: W.ai[key], "aria-label": "Use " + meta.name });
+    const tile = el("label", { class: "tile" + (W.ai[key] ? " on" : "") },
+      el("div", { class: "head" }, cb, el("span", { class: "name" }, meta.name), el("span", { class: "maker" }, meta.maker)),
+      el("p", { class: "muted small", style: "margin:4px 0 6px" }, meta.about),
+      a.app_installed ? el("span", null, el("span", { class: "pill ok" }, el("span", { class: "dot" }), "On this Mac"))
+        : el("div", null, el("p", { class: "small", style: "margin:0 0 6px" }, "Not on this Mac yet. You can finish setup first and install it after."),
+            el("button", { class: "btn small", type: "button", onclick: e => { e.preventDefault(); openUrl(a.download); } }, "Download " + meta.name)));
+    cb.addEventListener("change", () => { W.ai[key] = cb.checked; tile.classList.toggle("on", cb.checked); note.hidden = W.ai.openai || W.ai.claude; });
+    return tile;
+  });
+  const note = el("p", { class: "help", hidden: W.ai.openai || W.ai.claude }, "Pick at least one to study with. You can change this later in Settings.");
+  return [
+    el("h1", null, "Which AI do you study with?"),
+    el("p", { class: "lede" }, "Super Student connects your course folder to the app you pick. Choose both if you use both."),
+    el("div", { class: "tiles" }, tiles), note,
+    el("div", { class: "nav" }, el("button", { class: "btn", onclick: () => go("courses") }, "Back"), el("span", { class: "spacer" }),
+      el("button", { class: "btn primary", onclick: () => go("options") }, "Continue")),
+  ];
+}
+
+function stepOptions() {
+  const auto = el("input", { type: "checkbox", class: "switch", role: "switch", checked: W.auto, "aria-label": "Keep courses up to date automatically" });
+  const every = el("select", { "aria-label": "How often" }, S.settings.intervals.map(h => el("option", { value: h, selected: h === W.interval }, "Every " + h + " hours")));
+  const sub = el("div", { class: "sub row", hidden: !W.auto }, every, el("span", { class: "muted small" }, "while your Mac is on"));
+  auto.addEventListener("change", () => { W.auto = auto.checked; sub.hidden = !auto.checked; });
+  every.addEventListener("change", () => { W.interval = parseInt(every.value, 10); });
+  const tr = el("input", { type: "checkbox", class: "switch", role: "switch", checked: W.transcribe, "aria-label": "Turn lecture recordings into text" });
+  tr.addEventListener("change", () => { W.transcribe = tr.checked; });
+  const where = el("div", { class: "s" }, friendlyPath(W.library));
+  const warn = el("p", { class: "err small" });
+  const change = NATIVE ? el("button", { class: "btn small", onclick: async () => {
+    const r = await api("/api/choose-folder", {});
+    if (r.ok) { W.library = r.path; where.textContent = friendlyPath(W.library); warn.textContent = r.warning || ""; } else if (r.message) toast(r.message, true);
+  } }, "Change…") : null;
+  return [
+    el("h1", null, "A few options"),
+    el("p", { class: "lede" }, "These are good as they are. You can change any of them later in Settings."),
+    el("div", { style: "margin-top:18px" },
+      el("div", { class: "opt" }, el("div", { class: "txt" }, el("div", { class: "t" }, "Keep courses up to date automatically"),
+        el("div", { class: "s" }, "New slides, announcements and grades are copied without you doing anything."), sub), auto),
+      el("div", { class: "opt" }, el("div", { class: "txt" }, el("div", { class: "t" }, "Turn lecture recordings into text"),
+        el("div", { class: "s" }, "So your AI knows what was said in class. It runs privately on this Mac. The first time, it downloads a speech model of about 500 MB, and long recordings take a while.")), tr),
+      el("div", { class: "opt" }, el("div", { class: "txt" }, el("div", { class: "t" }, "Where your courses are saved"), where, warn), change)),
+    el("div", { class: "nav" }, el("button", { class: "btn", onclick: () => go("ai") }, "Back"), el("span", { class: "spacer" }),
+      el("button", { class: "btn primary", onclick: () => go("setup") }, "Set up Super Student")),
+  ];
+}
+
+function checkRow(label, st, detail) {
+  const mark = st === "ok" ? el("span", { class: "mark ok" }, svg(ICON.check)) : st === "no" ? el("span", { class: "mark no" }, "!")
+    : st === "run" ? el("span", { class: "spin", style: "margin:2px" }) : el("span", { class: "mark wait" });
+  return el("li", null, mark, el("div", null, el("div", { style: st === "wait" ? "color:var(--faint)" : "" }, label), detail ? el("div", { class: "d" }, detail) : null));
+}
+
+function stepSetup() {
+  const list = el("ul", { class: "checks", "aria-live": "polite" });
+  const cont = el("button", { class: "btn primary", disabled: true, onclick: () => go("ready") }, "Continue");
+  const hint = el("p", { class: "help", hidden: true }, "The first copy can take a while, mostly for lecture recordings. It keeps going even if you close this window, and your AI can start using courses as they arrive.");
+  const planned = [{ id: "settings", label: "Save your settings" }];
+  if (W.ai.openai) planned.push({ id: "openai", label: "Connect ChatGPT" });
+  if (W.ai.claude) planned.push({ id: "claude", label: "Connect Claude" });
+  planned.push({ id: "schedule", label: W.auto ? "Turn on automatic updates" : "Leave automatic updates off" });
+  if (W.transcribe && !S.transcription.available) planned.push({ id: "speech", label: "Add the part that turns recordings into text" });
+  planned.push({ id: "sync", label: "Copy your courses from Canvas" });
+
+  function draw() {
+    const res = W.setupResult;
+    list.replaceChildren(...planned.map(p => {
+      if (p.id === "sync") {
+        if (!W.syncStarted) return checkRow(p.label, res ? "run" : "wait");
+        if (PROG && !PROG.running && (!PROG.ours || (PROG.exit_code !== null && PROG.exit_code !== undefined))) {
+          if (PROG.auth_error) return checkRow("Canvas didn't accept the access token", "no", "Go back to Canvas access and connect again.");
+          return PROG.failed ? checkRow("The first copy stopped early", "no", "It tries again on the next update. You can see what happened on the dashboard.")
+            : checkRow("Copied your courses", "ok");
+        }
+        return checkRow(p.label, "run", (PROG && PROG.phase) || "Starting");
+      }
+      if (p.id === "speech") return checkRow(p.label, res ? "ok" : "wait", res ? "Installing in the background. Recordings are turned into text once it's ready." : "");
+      const got = res && res.steps.find(s => s.id === p.id);
+      if (!got) return checkRow(p.label, res ? "ok" : (p.id === "settings" ? "run" : "wait"));
+      return checkRow(got.label, got.ok ? "ok" : "no", got.ok ? "" : got.id === "schedule" ? got.detail : (got.detail || "") + " You can try again from Settings.");
+    }));
+  }
+  async function run() {
+    if (W.setupStarted) { draw(); return; }
+    W.setupStarted = true;
+    draw();
+    const r = await api("/api/setup/finish", { excluded: [...W.excluded], assistants: W.ai, auto_sync: W.auto, interval: W.interval, transcribe: W.transcribe, library_dir: W.library });
+    if (!r.ok) { W.setupStarted = false; list.append(el("li", null, el("span"), el("p", { class: "err" }, r.message || "Setup didn't finish."))); return; }
+    W.setupResult = r;
+    if (W.transcribe && !S.transcription.available) await api("/api/install-transcription", {});
+    draw();
+    const s = await api("/api/sync/start", {});
+    W.syncStarted = !!s.ok;
+    cont.disabled = false; hint.hidden = false;
+    await refreshState();
+    draw();
+    ensurePolling(draw);
+  }
+  setTimeout(run, 150);
+  if (W.syncStarted) { cont.disabled = false; hint.hidden = false; }
+  return [
+    el("h1", null, "Setting up"),
+    el("p", { class: "lede" }, "This takes a moment. Then Super Student starts copying your courses."),
+    list, hint,
+    el("div", { class: "nav" }, el("span", { class: "spacer" }), cont),
+  ];
+}
+
+const GUIDES = {
+  openai: {
+    steps: [
+      "Quit ChatGPT completely (in the menu bar, ChatGPT, then Quit ChatGPT) and open it again, so it notices Super Student.",
+      "Create a project for your classes. In the project, choose Edit project, then Add folder, and pick the SuperStudent folder in your home folder. Make it the primary folder.",
+      "Start a Work task in that project and ask about any of your courses.",
+    ],
+    note: "ChatGPT in a web browser can't see files on your Mac. Use the ChatGPT app, or make an exam pack and upload it to any chat.",
+    place: "chatgpt",
+  },
+  claude: {
+    steps: [
+      "Quit Claude completely (in the menu bar, Claude, then Quit Claude) and open it again, so it notices Super Student.",
+      "Start a new chat and ask about any of your courses. Claude uses Super Student to search your materials, read slides and check due dates.",
+    ],
+    note: "Claude in a web browser can't see files on your Mac. Use the Claude app, or make an exam pack and upload it to any chat.",
+    place: "claude",
+  },
+};
+function guideBlock(key, inSheet) {
+  const a = S.assistants[key], g = GUIDES[key], meta = APPS[key];
+  return el("section", { class: "guide", style: inSheet ? "margin-top:4px" : null },
+    inSheet ? null : el("h2", { style: "font-size:20px" }, "With " + meta.name),
+    el("ol", null, g.steps.map(s => el("li", null, s))),
+    el("p", { class: "note" }, g.note),
+    el("div", { class: "row" },
+      a.app_installed ? el("button", { class: "btn", onclick: () => openPlace(g.place) }, "Open " + meta.name)
+        : el("button", { class: "btn", onclick: () => openUrl(a.download) }, "Download " + meta.name),
+      key === "openai" ? el("button", { class: "btn quiet", onclick: () => openPlace("library") }, "Show the SuperStudent folder") : null));
+}
+function examplePrompts() {
+  const first = S && S.courses && S.courses[0];
+  const code = first ? (first.code || first.name) : "my biology class";
+  return [
+    "What's due this week across all my courses?",
+    "What's likely on the " + code + " midterm, and what did the professor say to focus on?",
+    "Explain the hardest idea from last week's " + code + " lecture, using the slides.",
+    "Make me a 15-question practice quiz for " + code + " with an answer key.",
+  ];
+}
+function promptList() {
+  return el("ul", { class: "prompts" }, examplePrompts().map(p => el("li", null, el("span", { class: "q" }, p),
+    el("button", { class: "btn small", onclick: () => copyText(p), "aria-label": "Copy: " + p }, "Copy"))));
+}
+
+function stepReady() {
+  const chosen = ["openai", "claude"].filter(k => W.ai[k]);
+  return el("main", { class: "stage", style: "margin:0 auto" },
+    brand(),
+    el("h1", { style: "margin-top:36px" }, "You're ready to study."),
+    el("p", { class: "lede" }, "Your courses are being copied in the background. You can start asking questions now; answers get better as more lectures are turned into text."),
+    chosen.length ? chosen.map(guideBlock) : el("div", { class: "guide" }, el("p", null, "You didn't pick an AI app. Your courses are in the SuperStudent folder in your home folder, and you can connect ChatGPT or Claude any time from Settings.")),
+    el("section", { class: "guide" }, el("h2", { style: "font-size:20px" }, "Things to ask"), promptList()),
+    el("section", { class: "guide" }, el("h2", { style: "font-size:20px" }, "Before a big review"),
+      el("p", null, "Search is great for specific questions. For \u201creview everything for the midterm,\u201d your AI should first study the whole course: read every document, look at every picture and save notes. Once your courses have finished copying, paste this request into ChatGPT or Claude. A full semester takes a few sessions."),
+      el("button", { class: "btn", onclick: () => copyText(STUDY_REQUEST) }, "Copy the study request")),
+    el("div", { class: "nav" }, el("span", { class: "spacer" }), el("button", { class: "btn primary big", onclick: async () => { await refreshState(); view = "dashboard"; render(); } }, "Go to my courses")));
+}
+
+/* ------------------------------------------------------------------ dashboard */
+const Q = { text: "", course: "", kind: "", hits: null, seq: 0 };
+
+function renderDashboard() {
+  const syncBtn = el("button", { class: "btn primary", id: "syncbtn", onclick: () => startSync() }, "Update now");
+  const top = el("header", { class: "top" }, brand(), el("div", { class: "status", id: "status", "aria-live": "polite" }), el("span", { class: "spacer" }),
+    syncBtn, el("button", { class: "btn", onclick: openSettings }, "Settings"));
+  const input = el("input", { type: "search", id: "q", placeholder: "Search slides, readings, lectures and announcements", "aria-label": "Search your courses", autocomplete: "off" });
+  input.value = Q.text;
+  let timer = null;
+  input.addEventListener("input", () => { clearTimeout(timer); timer = setTimeout(() => runSearch(input.value), 280); });
+  input.addEventListener("keydown", e => { if (e.key === "Enter") { clearTimeout(timer); runSearch(input.value); } if (e.key === "Escape") { input.value = ""; runSearch(""); } });
+  const course = el("select", { id: "qcourse", "aria-label": "Which course" });
+  course.addEventListener("change", () => { Q.course = course.value; runSearch(input.value); });
+  const kind = el("select", { id: "qkind", "aria-label": "What kind of material" },
+    [["", "Everything"], ["slides", "Slides"], ["lecture", "Lecture recordings"], ["reading", "Readings and PDFs"], ["assignment", "Assignments"], ["announcement", "Announcements"]]
+      .map(([v, t]) => el("option", { value: v, selected: Q.kind === v }, t)));
+  kind.addEventListener("change", () => { Q.kind = kind.value; runSearch(input.value); });
+  return el("div", null, top,
+    el("div", { class: "wrap" },
+      el("div", { id: "attention" }),
+      el("div", { class: "searchbar" }, el("div", { class: "field-wrap" }, svg(ICON.search), input), course, kind),
+      el("div", { class: "grid" }, el("section", { id: "left", "aria-live": "polite" }), el("aside", { class: "side", id: "side" }))));
+}
+
+function renderDashParts() {
+  if (view !== "dashboard" || !document.getElementById("status")) return;
+  renderStatus(); renderAttention(); renderCourseSelect(); renderLeft(); renderSide();
+}
+
+function renderStatus() {
+  const box = document.getElementById("status"), btn = document.getElementById("syncbtn");
+  const running = isRunning();
+  btn.disabled = !!running; btn.textContent = running ? "Updating…" : "Update now";
+  if (running) { box.replaceChildren(el("span", { class: "pulse" }), el("span", null, (PROG && PROG.phase) || "Updating your courses")); return; }
+  const when = S.sync.last_text ? "Updated " + S.sync.last_text + "." : "Not updated yet.";
+  const auto = S.settings.auto_sync ? " Checks Canvas every " + S.settings.interval + " hours." : " Automatic updates are off.";
+  box.replaceChildren(el("span", null, when + auto));
+}
+
+function isRunning() { return pollTimer ? !!(PROG && PROG.running) : !!S.sync.running; }
+
+function attentionItems() {
+  const items = [];
+  if (!S.canvas.token_saved) items.push({ kind: "token", action: "reconnect", text: "Canvas isn't connected, so your courses aren't being updated." });
+  return items.concat(S.attention || [], localAttention);
+}
+function renderAttention() {
+  const box = document.getElementById("attention");
+  box.replaceChildren(...attentionItems().map(a => {
+    const acts = [];
+    if (a.action === "reconnect") acts.push(el("button", { class: "btn primary small", onclick: openReconnect }, "Reconnect Canvas"));
+    if (a.action === "install-transcription") acts.push(el("button", { class: "btn small", onclick: async (e) => { e.target.disabled = true; const r = await api("/api/install-transcription", {}); toast(r.message || "Installing."); } }, "Install it"));
+    if (a.action === "sync") acts.push(el("button", { class: "btn small", onclick: () => startSync() }, "Update now"));
+    if (a.action === "dismiss-update") acts.push(el("button", { class: "btn small", onclick: async () => { await api("/api/dismiss-update", {}); await refreshState(); renderAttention(); } }, "Got it"));
+    if (a.details && a.details.length) acts.push(el("button", { class: "btn quiet small", onclick: () => openDetails(a) }, "See which"));
+    return el("div", { class: "banner" + (a.kind === "token" || a.kind === "error" ? " bad" : ""), role: "status" }, el("div", { class: "txt" }, a.text), acts);
+  }));
+}
+
+function renderCourseSelect() {
+  const sel = document.getElementById("qcourse");
+  const key = S.courses.map(c => c.folder).join("|");
+  if (sel.dataset.key === key) return;
+  sel.dataset.key = key;
+  const current = Q.course;
+  sel.replaceChildren(el("option", { value: "" }, "All courses"), ...S.courses.map(c => el("option", { value: c.folder, selected: c.folder === current }, c.code || c.name)));
+}
+
+function renderLeft() {
+  const box = document.getElementById("left");
+  if (Q.hits !== null) { box.replaceChildren(...renderResults()); return; }
+  const head = el("div", { class: "section-head" }, el("h2", null, "Your courses"), el("span", { class: "spacer" }),
+    S.courses.length ? el("button", { class: "btn quiet small", onclick: () => openPlace("library") }, "Show in Finder") : null);
+  if (!S.courses.length) {
+    const running = isRunning();
+    box.replaceChildren(head, el("div", { class: "empty" },
+      running ? el("p", { class: "row" }, el("span", { class: "spin" }), "Your first update is running. Courses show up here as they're copied.")
+        : [el("p", null, "No courses have been copied yet."), el("button", { class: "btn primary", onclick: () => startSync() }, "Update now")]));
+    return;
+  }
+  box.replaceChildren(head, el("div", { class: "courses" }, S.courses.map(courseCard)));
+}
+
+function courseCard(c) {
+  const n = c.counts, bits = [];
+  if (n.documents) bits.push(plural(n.documents, "document"));
+  if (n.transcripts) bits.push(plural(n.transcripts, "lecture recording"));
+  if (n.assignments) bits.push(plural(n.assignments, "assignment"));
+  if (n.announcements) bits.push(plural(n.announcements, "announcement"));
+  const next = c.next ? el("div", { class: "next" },
+      el("span", { class: "k" }, c.next.kind === "Due" ? "Due" : c.next.kind), el("span", null, c.next.title), el("span", { class: "w" }, c.next.when))
+    : el("div", { class: "next" }, el("span", { class: "k" }, "Next"), el("span", { class: "muted" }, "Nothing due soon"));
+  return el("article", { class: "course", style: "--c:" + courseColor(c.id) },
+    el("div", { class: "tab" }, c.code || c.name),
+    el("div", { class: "name" }, c.name),
+    c.term ? el("div", { class: "term" }, c.term) : null,
+    next,
+    el("div", { class: "counts" }, bits.join(", ") || "Nothing copied yet",
+      n.waiting ? el("div", { class: "wait" }, plural(n.waiting, "recording") + " waiting to be turned into text") : null),
+    el("div", { class: "acts" },
+      el("button", { class: "btn quiet small", onclick: () => openPlace("course", c.folder) }, "Open folder"),
+      el("button", { class: "btn quiet small", onclick: () => openPack(c) }, "Make exam pack")));
+}
+
+async function runSearch(text) {
+  Q.text = text.trim();
+  const seq = ++Q.seq;
+  if (!Q.text) { Q.hits = null; renderLeft(); return; }
+  const params = new URLSearchParams({ q: Q.text, course: Q.course, kind: Q.kind });
+  const r = await api("/api/search?" + params.toString());
+  if (seq !== Q.seq) return;   // a newer search already ran
+  Q.hits = r.ok ? r.hits : [];
+  renderLeft();
+}
+
+function renderResults() {
+  const clear = el("button", { class: "btn quiet small", onclick: () => { const i = document.getElementById("q"); i.value = ""; runSearch(""); i.focus(); } }, "Clear search");
+  const head = el("div", { class: "section-head" }, el("h2", null, Q.hits.length ? plural(Q.hits.length, "result") : "No results"), el("span", { class: "spacer" }), clear);
+  if (!Q.hits.length) return [head, el("div", { class: "empty" }, el("p", null, "Nothing in your courses matches “" + Q.text + "”."), el("p", { class: "muted small", style: "margin:0" }, "Try fewer or different words, or pick All courses and Everything. Your AI app can also find things by meaning, not just exact words."))];
+  const byFolder = {};
+  S.courses.forEach(c => { byFolder[c.folder] = c; });
+  return [head, el("div", { class: "results" }, Q.hits.map(h => {
+    const c = byFolder[h.course];
+    return el("article", { class: "hit" },
+      el("div", { class: "h" },
+        el("button", { class: "title", onclick: () => openItem(h.path) }, h.title || h.path.split("/").pop()),
+        h.locator && h.locator !== h.title ? el("span", { class: "loc" }, h.locator) : null,
+        h.removed ? el("span", { class: "loc", title: "Your instructor deleted, replaced or hid this on Canvas. Super Student kept a copy." }, "· no longer on Canvas") : null,
+        el("span", { class: "spacer" }),
+        el("span", { class: "chip", style: "--c:" + courseColor(c ? c.id : h.course) }, c ? (c.code || c.name) : h.course)),
+      el("p", { class: "snip" }, snippetNodes(h.snippet)),
+      el("div", { class: "row", style: "margin-left:-8px" },
+        el("button", { class: "btn quiet small", onclick: () => openItem(h.path) }, "Open"),
+        el("button", { class: "btn quiet small", onclick: () => openItem(h.path, true) }, "Show in Finder")));
+  }))];
+}
+
+function openItem(path, reveal) { api("/api/open", { path, reveal: !!reveal }).then(r => { if (!r.ok) toast(r.message, true); }); }
+
+function renderSide() {
+  const side = document.getElementById("side");
+  const rows = ["openai", "claude"].map(key => {
+    const a = S.assistants[key], meta = APPS[key];
+    const pill = a.status === "connected" ? el("span", { class: "pill ok" }, el("span", { class: "dot" }), "Connected")
+      : a.status === "partial" ? el("span", { class: "pill warn" }, el("span", { class: "dot" }), "Needs fixing")
+      : el("span", { class: "pill off" }, "Not connected");
+    const act = a.status === "connected" ? el("button", { class: "btn quiet small", onclick: () => openGuide(key) }, "How to use")
+      : el("button", { class: "btn small", onclick: () => connectAssistant(key) }, a.status === "partial" ? "Fix" : "Connect");
+    return el("div", { class: "ai" }, el("span", { class: "n" }, meta.name), pill, el("span", { class: "spacer" }), act);
+  });
+  side.replaceChildren(
+    el("section", { class: "panel" }, el("h2", null, "Study with your AI"), rows),
+    studyPanel(),
+    el("section", { class: "panel" }, el("h2", null, "Things to ask"), promptList()),
+    el("section", { class: "panel" }, el("h2", null, "Your folder"),
+      el("p", { class: "muted small" }, friendlyPath(S.library.path) + ". Drop your own notes or textbook PDFs into a course's My Files folder and they're included too."),
+      el("button", { class: "btn small", onclick: () => openPlace("library") }, "Show in Finder")));
+}
+
+const STUDY_REQUEST = "Use Super Student to study my courses the way a top student would. Call study_progress and work through the documents it lists, in order: read each one all the way through, look at every slide and page that has pictures, save a description of each picture that doesn't have one, then save study notes that cite every slide or page. When a module is finished, save module notes; when a course is finished, save course notes. Keep going until you reach a good stopping point, then tell me what's done and what's left.";
+
+function studyPanel() {
+  const st = S.study || { docs: 0, done: 0, courses: [] };
+  const v = S.visuals || { visuals: 0, described: 0 };
+  if (!st.docs) return null;
+  const left = st.docs - st.done;
+  const bar = el("div", { class: "meter", role: "img", "aria-label": st.done + " of " + st.docs + " documents studied" },
+    el("span", { style: "width:" + Math.round(100 * st.done / st.docs) + "%" }));
+  return el("section", { class: "panel" }, el("h2", null, "Study pass"),
+    el("p", { class: "small", style: "margin-bottom:8px" },
+      left ? "Your AI has studied " + st.done + " of " + plural(st.docs, "document") + "."
+           : "Your AI has studied all " + plural(st.docs, "document") + "."),
+    bar,
+    v.visuals ? el("p", { class: "muted small", style: "margin-top:8px" }, v.described + " of " + plural(v.visuals, "picture") + " described.") : null,
+    el("p", { class: "muted small" }, "For broad review, your AI should know everything, not just what a search finds. Paste this request into ChatGPT or Claude: it reads every document, looks at every picture and saves notes, and Super Student checks nothing was skipped. It takes a few sessions for a full semester."),
+    left || v.described < v.visuals ? el("button", { class: "btn small", onclick: () => copyText(STUDY_REQUEST) }, "Copy the request") : null);
+}
+
+async function connectAssistant(key) {
+  const r = await api("/api/assistant/connect", { which: key });
+  await refreshState(); renderDashParts();
+  if (!r.ok) { toast(r.message || "Couldn't connect.", true); return; }
+  openGuide(key, APPS[key].name + " is connected. One more thing:");
+}
+
+async function startSync(course) {
+  localAttention = [];
+  const r = await api("/api/sync/start", { course: course || "" });
+  if (!r.ok) { toast(r.message || "Couldn't start the update.", true); return; }
+  toast(r.message || "Update started.");
+  PROG = { running: true, phase: "Starting" };
+  ensurePolling();
+  renderDashParts();
+}
+
+function ensurePolling(onTick) {
+  if (onTick) ensurePolling.onTick = onTick;
+  if (pollTimer) return;
+  const tick = async () => {
+    const p = await api("/api/sync/progress");
+    if (!p || p.running === undefined) return;
+    PROG = p;
+    if (ensurePolling.onTick && view === "wizard") ensurePolling.onTick();
+    if (p.running) {
+      if (view === "dashboard") { if (Date.now() - lastStateAt > 8000) await refreshState(); renderStatus(); if (!S.courses.length || Date.now() - lastStateAt < 1000) renderDashParts(); }
+      return;
+    }
+    clearInterval(pollTimer); pollTimer = null;
+    await refreshState();
+    if (view === "dashboard") {
+      if (p.ours && p.failed && !p.auth_error) localAttention = [{ kind: "error", action: "details", text: "The last update stopped early. It tries again on the next update.", details: p.lines }];
+      if (p.ours) toast(p.auth_error ? "Canvas didn't accept the saved access token." : p.failed ? "The update stopped early." : "Your courses are up to date.", p.failed || p.auth_error);
+      renderDashParts();
+    }
+  };
+  pollTimer = setInterval(tick, 2000);
+  tick();
+}
+
+/* ------------------------------------------------------------------ sheets */
+function sheet(title, build, opts) {
+  opts = opts || {};
+  const root = document.getElementById("modals");
+  const prev = document.activeElement;
+  const id = "s" + Math.random().toString(36).slice(2);
+  let scrim;
+  const close = () => { scrim.remove(); document.removeEventListener("keydown", onKey); if (prev && prev.focus) prev.focus(); if (opts.onClose) opts.onClose(); };
+  const onKey = e => { if (e.key === "Escape" && root.lastElementChild === scrim) close(); };
+  const box = el("div", { class: "sheet" + (opts.wide ? " wide" : ""), role: "dialog", "aria-modal": "true", "aria-labelledby": id },
+    el("div", { class: "sheet-head" }, el("h2", { id, tabindex: "-1" }, title), el("button", { class: "btn quiet close", "aria-label": "Close", onclick: () => close() }, "Close")),
+    el("div", { class: "sheet-body" }, build(close)));
+  scrim = el("div", { class: "scrim", onmousedown: e => { if (e.target === scrim) close(); } }, box);
+  root.append(scrim);
+  document.addEventListener("keydown", onKey);
+  setTimeout(() => { const f = box.querySelector(".sheet-body input[type=password], .sheet-body input[type=text]"); (f || box.querySelector("h2")).focus(); }, 40);
+  return close;
+}
+
+function confirmSheet(title, text, yes, onYes) {
+  sheet(title, close => [el("p", null, text), el("div", { class: "sheet-foot" },
+    el("button", { class: "btn", onclick: () => close() }, "Cancel"),
+    el("button", { class: "btn primary", onclick: () => { close(); onYes(); } }, yes))]);
+}
+
+function openDetails(a) {
+  sheet("Details", close => [el("p", null, a.text), a.kind === "error"
+    ? el("div", { class: "lines" }, (a.details || []).join("\n"))
+    : el("ul", { class: "list" }, (a.details || []).map(d => el("li", null, d))),
+    el("div", { class: "sheet-foot" }, el("button", { class: "btn quiet", onclick: () => openPlace("logs") }, "Open the logs folder"), el("button", { class: "btn primary", onclick: () => close() }, "Done"))], { wide: true });
+}
+
+function openGuide(key, lead) {
+  sheet("Using Super Student with " + APPS[key].name, close => [lead ? el("p", { class: "good", style: "margin-top:0" }, lead) : null, guideBlock(key, true),
+    el("div", { class: "sheet-foot" }, el("button", { class: "btn primary", onclick: () => close() }, "Done"))], { wide: true });
+}
+
+function openReconnect() {
+  if (!S.canvas.url) { W.step = "school"; view = "wizard"; render(); return; }
+  sheet("Reconnect Canvas", close => [
+    el("p", { class: "muted" }, "Make a new access token in Canvas and paste it here. Your folder and settings stay as they are."),
+    tokenPanel({ host: S.canvas.host, url: S.canvas.url, onConnected: async () => { close(); await refreshState(); renderDashParts(); toast("Canvas is connected again."); startSync(); } })], { wide: true });
+}
+
+function openPack(c) {
+  sheet("Exam pack for " + (c.code || c.name), close => {
+    const picked = new Set();
+    const make = el("button", { class: "btn primary", onclick: () => makeIt() }, "Make exam pack");
+    const err = el("p", { class: "err", role: "alert" });
+    const mods = (c.modules || []).filter(m => m.position !== null && m.position !== undefined);
+    const list = mods.length ? el("div", { class: "choices", style: "max-height:300px;overflow:auto" }, mods.map(m => {
+      const cb = el("input", { type: "checkbox" });
+      cb.addEventListener("change", () => { cb.checked ? picked.add(m.position) : picked.delete(m.position); make.textContent = picked.size ? "Make exam pack (" + plural(picked.size, "module") + ")" : "Make exam pack (whole course)"; });
+      return el("label", { class: "choice" }, cb, el("div", null, el("div", { class: "t" }, m.name || "Module " + m.position)));
+    })) : el("p", { class: "muted" }, "This course has no modules, so the pack includes the whole course.");
+    if (mods.length) make.textContent = "Make exam pack (whole course)";
+    const out = el("div");
+    async function makeIt() {
+      make.disabled = true; make.textContent = "Making the pack…"; err.textContent = "";
+      const r = await api("/api/pack", { folder: c.folder, modules: [...picked] });
+      make.disabled = false; make.textContent = "Make another";
+      if (!r.ok) { err.textContent = r.message; return; }
+      out.replaceChildren(el("div", { class: "aside", style: "margin-top:14px" },
+        el("strong", null, "Made “" + r.name + "”"), " with " + plural(r.files, "file") + " (" + r.size + "). It's open in Finder. Drag the folder, or the files in it, into a ChatGPT or Claude chat."));
+    }
+    return [
+      el("p", { class: "muted" }, "Copies the slides (as PDFs), readings and lecture transcripts into one folder you can drag into any chat, so the AI sees every slide as it was shown. Pick the modules your exam covers, or none for the whole course."),
+      list, err, out,
+      el("div", { class: "sheet-foot" }, el("button", { class: "btn", onclick: () => close() }, "Close"), make)];
+  }, { wide: true });
+}
+
+function openUninstall() {
+  sheet("Uninstall Super Student?", close => {
+    const trash = el("input", { type: "checkbox" });
+    const go = el("button", { class: "btn destroy", onclick: async () => {
+      go.disabled = true; go.textContent = "Removing…";
+      const r = await api("/api/uninstall", { remove_library: trash.checked });
+      if (!r.ok) { go.disabled = false; go.textContent = "Uninstall"; toast(r.message || "Couldn't finish.", true); return; }
+      close(); showRemoved(r);
+    } }, "Uninstall");
+    return [
+      el("p", null, "This turns off automatic updates, disconnects ChatGPT and Claude, removes the saved Canvas access token and Super Student's own files from this Mac."),
+      el("label", { class: "radio" }, trash, el("div", null, el("div", null, "Also move my SuperStudent folder to the Trash"),
+        el("div", { class: "muted small" }, "Leave this off to keep your copied courses, notes and exam packs."))),
+      el("div", { class: "sheet-foot" }, el("button", { class: "btn", onclick: () => close() }, "Cancel"), go)];
+  });
+}
+
+function showRemoved(r) {
+  view = "removed";
+  if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+  const settingsUrl = (r.canvas_url || (S && S.canvas.url) || "") + "/profile/settings";
+  document.getElementById("app").replaceChildren(el("main", { class: "stage", style: "margin:0 auto" },
+    brand(),
+    el("h1", { style: "margin-top:36px" }, "Super Student is removed."),
+    el("p", { class: "lede" }, "Two things left to do:"),
+    el("ol", { class: "howto" },
+      el("li", null, "Delete the access token in Canvas, so nothing can use it.",
+        (r.canvas_url || (S && S.canvas.url)) ? el("div", null, el("button", { class: "btn", onclick: () => openUrl(settingsUrl) }, "Open Canvas settings")) : null),
+      el("li", null, "Close this window, then drag the Super Student app from Applications to the Trash.")),
+    el("div", { class: "nav" }, el("button", { class: "btn primary", onclick: () => api("/api/quit", {}).then(() => { document.getElementById("app").replaceChildren(el("div", { class: "loading" }, "You can close this window.")); }) }, "Close Super Student"))));
+}
+
+function openSettings() {
+  sheet("Settings", closeSettings => {
+    const save = async (body, msg) => {
+      const r = await api("/api/settings", body);
+      if (!r.ok) { toast(r.message || "Couldn't save that.", true); return; }
+      await refreshState(); renderDashParts();
+      if (r.problem) toast("Saved, but automatic updates couldn't be turned on: " + r.message, true);
+      else if (r.message && r.message.startsWith("Saved:")) toast(r.message);
+      else toast(msg || "Saved.");
+    };
+    const st = S.settings;
+
+    // Canvas
+    const canvas = el("div", { class: "setgroup" }, el("h3", null, "Canvas"),
+      el("div", { class: "setrow" }, el("div", { class: "txt" },
+          el("div", null, S.canvas.token_saved ? "Connected to " + S.canvas.host : S.canvas.host ? "Not connected to " + S.canvas.host : "Not connected"),
+          S.canvas.user ? el("div", { class: "s" }, "As " + S.canvas.user) : null),
+        el("button", { class: "btn small", onclick: openReconnect }, S.canvas.token_saved ? "Reconnect" : "Connect"),
+        S.canvas.token_saved ? el("button", { class: "btn small danger", onclick: () => confirmSheet("Sign out of Canvas?", "Super Student stops updating your courses until you connect again. Your SuperStudent folder stays as it is.", "Sign out", async () => { await api("/api/signout", {}); closeSettings(); await refreshState(); renderDashParts(); toast("Signed out of Canvas."); }) }, "Sign out") : null));
+
+    // Courses
+    const courseBox = el("div");
+    const loadCourses = async () => {
+      courseBox.replaceChildren(el("p", { class: "row muted small" }, el("span", { class: "spin" }), "Getting your courses from Canvas…"));
+      const r = await api("/api/canvas/courses");
+      if (!r.ok) { courseBox.replaceChildren(el("p", { class: "err" }, r.message)); return; }
+      const excluded = new Set(r.courses.filter(c => !c.included).map(c => c.id));
+      courseBox.replaceChildren(el("div", { class: "choices" }, r.courses.map(c => {
+        const cb = el("input", { type: "checkbox", checked: c.included });
+        cb.addEventListener("change", () => { cb.checked ? excluded.delete(c.id) : excluded.add(c.id); save({ excluded: [...excluded] }, cb.checked ? "Added. It's copied on the next update." : "Removed. Files already copied stay in your folder."); });
+        return el("label", { class: "choice" }, cb, el("div", null, el("div", { class: "t" }, c.name), el("div", { class: "s" }, [c.code, c.term].filter(Boolean).join(", "))));
+      })));
+    };
+    const courses = el("div", { class: "setgroup" }, el("h3", null, "Courses"),
+      el("p", { class: "muted small" }, "All the courses you're in right now are copied, except ones you untick."), courseBox);
+    if (S.canvas.token_saved) loadCourses(); else courseBox.append(el("p", { class: "muted small" }, "Connect Canvas to choose courses."));
+
+    // Updates
+    const auto = el("input", { type: "checkbox", class: "switch", role: "switch", checked: st.auto_sync, "aria-label": "Update automatically" });
+    const every = el("select", { "aria-label": "How often", disabled: !st.auto_sync }, st.intervals.map(h => el("option", { value: h, selected: h === st.interval }, "Every " + h + " hours")));
+    auto.addEventListener("change", () => { every.disabled = !auto.checked; save({ auto_sync: auto.checked, interval: parseInt(every.value, 10) }, auto.checked ? "Automatic updates are on." : "Automatic updates are off."); });
+    every.addEventListener("change", () => save({ auto_sync: true, interval: parseInt(every.value, 10) }));
+    const updates = el("div", { class: "setgroup" }, el("h3", null, "Updates"),
+      el("div", { class: "setrow" }, el("div", { class: "txt" }, el("div", null, "Update automatically"), el("div", { class: "s" }, "While your Mac is on")), every, auto));
+
+    // Recordings
+    const tr = el("input", { type: "checkbox", class: "switch", role: "switch", checked: st.transcribe, "aria-label": "Turn recordings into text" });
+    tr.addEventListener("change", () => save({ transcribe: tr.checked }));
+    const radio = (value, label, sub) => {
+      const r = el("input", { type: "radio", name: "acc", value, checked: st.accuracy === value });
+      r.addEventListener("change", () => { if (r.checked) save({ accuracy: value }, "Saved. New recordings use this."); });
+      return el("label", { class: "radio" }, r, el("div", null, el("div", null, label), el("div", { class: "s muted small" }, sub)));
+    };
+    const keep = el("input", { type: "checkbox", class: "switch", role: "switch", checked: st.keep_videos, "aria-label": "Keep the video files" });
+    keep.addEventListener("change", () => save({ keep_videos: keep.checked }));
+    const rec = el("div", { class: "setgroup" }, el("h3", null, "Lecture recordings"),
+      el("div", { class: "setrow" }, el("div", { class: "txt" }, el("div", null, "Turn recordings into text"),
+        el("div", { class: "s" }, S.transcription.available ? "Runs privately on this Mac." : "The part that does this isn't installed yet.")),
+        S.transcription.available ? null : el("button", { class: "btn small", onclick: async e => { e.target.disabled = true; const r = await api("/api/install-transcription", {}); toast(r.message); } }, "Install"), tr),
+      radio("standard", "Standard", "Faster. Good for most lectures."),
+      radio("higher", "Higher accuracy", "Slower, and a bigger one-time download. Better with accents and technical terms."),
+      el("div", { class: "setrow" }, el("div", { class: "txt" }, el("div", null, "Keep the video files"), el("div", { class: "s" }, "Uses a lot of space. Off means only the text is kept.")), keep));
+
+    // AI apps
+    const ai = el("div", { class: "setgroup" }, el("h3", null, "AI apps"), ["openai", "claude"].map(key => {
+      const a = S.assistants[key];
+      return el("div", { class: "setrow" }, el("div", { class: "txt" }, el("div", null, APPS[key].name),
+          el("div", { class: "s" }, a.status === "connected" ? "Connected" : a.status === "partial" ? "Partly connected" : "Not connected")),
+        el("button", { class: "btn quiet small", onclick: () => openGuide(key) }, "How to use"),
+        el("button", { class: "btn small", onclick: () => connectAssistant(key) }, a.status === "connected" ? "Reconnect" : "Connect"));
+    }));
+
+    // Folder + extras + about
+    const folder = el("div", { class: "setgroup" }, el("h3", null, "Your folder"),
+      el("div", { class: "setrow" }, el("div", { class: "txt" }, el("div", null, friendlyPath(S.library.path))),
+        el("button", { class: "btn small", onclick: () => openPlace("library") }, "Show in Finder")));
+    const extras = el("div", { class: "setgroup" }, el("h3", null, "Extras"),
+      el("div", { class: "setrow" }, el("div", { class: "txt" }, el("div", null, "LibreOffice"),
+          el("div", { class: "s" }, "Opens older .ppt and .doc files and can turn exam packs into PDFs. Free.")),
+        S.extras.libreoffice ? el("span", { class: "pill ok" }, "Installed") : el("button", { class: "btn small", onclick: () => openUrl("https://www.libreoffice.org/download/download-libreoffice/") }, "Get LibreOffice")),
+      el("div", { class: "setrow" }, el("div", { class: "txt" }, el("div", null, "Reading text in pictures"),
+          el("div", { class: "s" }, S.extras.ocr ? "Labels in diagrams, scanned pages and lecture screens are read with " + S.extras.ocr_label + "."
+            : "Pictures are kept for your AI to look at, but the words in them aren't searchable on this computer.")),
+        S.extras.ocr ? el("span", { class: "pill ok" }, "On") : el("span", { class: "pill off" }, "Not available")));
+    const about = el("div", { class: "setgroup" }, el("h3", null, "About"),
+      el("div", { class: "setrow" }, el("div", { class: "txt" }, el("div", null, "Super Student " + S.version), el("div", { class: "s" }, "Reads from Canvas only. Never submits, posts or edits anything. (Like opening a page in your browser, reading one can mark it viewed in a module.)")),
+        el("button", { class: "btn quiet small", onclick: () => openPlace("logs") }, "Open logs")),
+      el("div", { class: "setrow" }, el("div", { class: "txt" }, el("div", null, "Remove Super Student"),
+          el("div", { class: "s" }, "Turns off updates and disconnects ChatGPT and Claude. Your courses folder stays unless you choose otherwise.")),
+        el("button", { class: "btn small danger", onclick: () => { closeSettings(); openUninstall(); } }, "Uninstall…")));
+    return [canvas, courses, updates, rec, ai, folder, extras, about];
+  }, { wide: true });
+}
+
+boot();
+</script>
+</body>
+</html>
