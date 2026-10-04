@@ -259,6 +259,15 @@ def _md_table(rows: List[List[str]], header: Optional[List[str]] = None) -> str:
     return "\n".join(lines)
 
 
+def _clear_assets(assets: Path) -> None:
+    # A directory link must be replaced, not left behind after rmtree fails:
+    # its children can themselves link outside the library.
+    if assets.is_symlink():
+        assets.unlink()
+    elif assets.exists():
+        shutil.rmtree(assets)
+
+
 def _save_asset(assets: Path, name: str, data: bytes) -> str:
     assets.mkdir(parents=True, exist_ok=True)
     target = assets / name
@@ -692,8 +701,7 @@ def _pptx(path: Path) -> Extracted:
     slide_area = max(1, (prs.slide_width or 1) * (prs.slide_height or 1))
     slides = list(prs.slides)                      # python-pptx follows presentation order (sldIdLst)
     assets = assets_dir_for(path)
-    if assets.exists():
-        shutil.rmtree(assets, ignore_errors=True)
+    _clear_assets(assets)
 
     def pictures(shapes):
         for shape in shapes:
@@ -869,8 +877,7 @@ def _docx(path: Path) -> Extracted:
     import mammoth
 
     assets = assets_dir_for(path)
-    if assets.exists():
-        shutil.rmtree(assets, ignore_errors=True)
+    _clear_assets(assets)
     saved: List[str] = []
     counter = [0]
     seen: dict = {}
@@ -1126,7 +1133,7 @@ def _legacy(path: Path) -> Extracted:
             if inner.assets:  # move saved images next to the original
                 src_assets = assets_dir_for(converted)
                 dst_assets = assets_dir_for(path)
-                shutil.rmtree(dst_assets, ignore_errors=True)
+                _clear_assets(dst_assets)
                 if src_assets.exists():
                     shutil.move(str(src_assets), str(dst_assets))
                 inner.assets = [a.replace(src_assets.name, dst_assets.name, 1) for a in inner.assets]

@@ -29,7 +29,8 @@ os.environ["CANVAS_TOKEN"] = "test-token-123"
 
 PASSED = []
 LABELS = ["Supraspinatus", "Infraspinatus", "Deltoid", "Humerus"]
-FONT = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+FONT = os.environ.get("SS_TEST_FONT") or ("/System/Library/Fonts/Supplemental/Arial Bold.ttf" if sys.platform == "darwin"
+                                         else "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf")
 
 
 def check(cond, label, detail=""):
@@ -189,6 +190,7 @@ def main() -> None:
     modules, calls = fake_vision()
     saved = {name: sys.modules.get(name) for name in modules}
     real_system = ocr.platform.system
+    disabled = os.environ.pop("SUPERSTUDENT_NO_APPLE_OCR", None)
     sys.modules.update(modules)
     ocr.platform.system = lambda: "Darwin"
     ocr.apple_available.cache_clear()
@@ -203,6 +205,8 @@ def main() -> None:
         got = ocr.read_lines(data=b"\x89PNG fake")
         check(len(got) == 3 and calls["image"][1][0] == "source", "reads image bytes too (pages rendered from PDFs)")
     finally:
+        if disabled is not None:
+            os.environ["SUPERSTUDENT_NO_APPLE_OCR"] = disabled
         ocr.platform.system = real_system
         for name, mod in saved.items():
             if mod is None:

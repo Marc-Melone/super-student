@@ -11,6 +11,7 @@ from __future__ import annotations
 import os
 import random
 import re
+import tempfile
 import threading
 import time
 from pathlib import Path
@@ -63,11 +64,31 @@ def _redact(url: str) -> str:
     return re.sub(r"(verifier|access_token|ks|sig|signature|token)=[^&]+", r"\1=…", url, flags=re.I)
 
 
+def _origin(url: str) -> Tuple[str, str, int]:
+    """Normalized transport origin; credentials must never cross a scheme or port boundary."""
+    parts = urlparse(url)
+    scheme, host = parts.scheme.lower(), (parts.hostname or "").lower()
+    if scheme not in ("http", "https") or not host or parts.username is not None or parts.password is not None:
+        raise ValueError("Canvas addresses must be HTTP(S) URLs without embedded credentials")
+    return scheme, host, parts.port if parts.port is not None else (443 if scheme == "https" else 80)
+
+
+class _CanvasSession(requests.Session):
+    def should_strip_auth(self, old_url: str, new_url: str) -> bool:
+        try:
+            return _origin(old_url) != _origin(new_url) or super().should_strip_auth(old_url, new_url)
+        except ValueError:
+            return True
+
+
 class Canvas:
     def __init__(self, base_url: str, token: str, log: Optional[Callable[[str], None]] = None,
                  timeout: int = 60):
         self.base = base_url.rstrip("/")
-        self.host = (urlparse(self.base).hostname or "").lower()
+        self.origin = _origin(self.base)
+        self.host = self.origin[1]
+        if self.origin[0] != "https" and self.host not in ("localhost", "127.0.0.1", "::1"):
+            raise ValueError("Canvas requires HTTPS; HTTP is allowed only for local test servers")
         self._token = token
         self.timeout = timeout
         self.log = log or (lambda msg: None)
@@ -81,7 +102,7 @@ class Canvas:
         name = "api" if with_token else "plain"
         sess = getattr(self._local, name, None)
         if sess is None:
-            sess = requests.Session()
+            sess = _CanvasSession()
             sess.headers["User-Agent"] = USER_AGENT
             if with_token:
                 sess.headers["Accept"] = "application/json"
@@ -89,7 +110,10 @@ class Canvas:
         return sess
 
     def _is_canvas_host(self, url: str) -> bool:
-        return (urlparse(url).hostname or "").lower() == self.host
+        try:
+            return _origin(url) == self.origin
+        except ValueError:
+            return False
 
     def url(self, path: str) -> str:
         if path.startswith(("http://", "https://")):
@@ -100,7 +124,7 @@ class Canvas:
     def _get(self, url: str, params: Optional[Dict[str, Any]] = None, *, stream: bool = False,
              with_token: bool = True, retries: int = 5) -> requests.Response:
         if with_token and not self._is_canvas_host(url):
-            raise ValueError("refusing to send the Canvas token to another host")
+            raise ValueError("refusing to send the Canvas token outside the configured secure Canvas address")
         attempt = 0
         while True:
             attempt += 1
@@ -282,7 +306,7 @@ class Canvas:
                        with_token: bool) -> Dict[str, Any]:
         resp = self._get(url, stream=True, with_token=with_token, retries=3)
         short = dest.name.encode("utf-8")[:120].decode("utf-8", "ignore")   # names are limited in bytes, not letters
-        tmp = dest.with_name(f".{short}.{os.getpid()}.{threading.get_ident()}.part")
+        tmp = None
         try:
             ctype = (resp.headers.get("Content-Type") or "").split(";")[0].strip().lower()
             length = resp.headers.get("Content-Length")
@@ -292,7 +316,9 @@ class Canvas:
             dest.parent.mkdir(parents=True, exist_ok=True)
             size = 0
             head = b""
-            with open(tmp, "wb") as fh:
+            fd, temp_name = tempfile.mkstemp(prefix=f".{short}.", suffix=".part", dir=str(dest.parent))
+            tmp = Path(temp_name)
+            with os.fdopen(fd, "wb") as fh:
                 for chunk in resp.iter_content(chunk_size=1 << 16):
                     if not chunk:
                         continue
@@ -317,7 +343,8 @@ class Canvas:
         finally:
             resp.close()
             try:
-                tmp.unlink()
+                if tmp is not None:
+                    tmp.unlink()
             except OSError:
                 pass
 

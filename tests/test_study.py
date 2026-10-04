@@ -146,7 +146,7 @@ def main() -> None:
     check(r["ok"] and r["kind"] == "module" and (mod1.parent.parent / "Study Notes" / "Modules" / mod1.name / "_Module notes.md").exists(),
           "module notes saved", r)
     status = {m["path"]: m["status"] for m in notes.progress(lib, course="FIN")["courses"][0]["modules"]}
-    check(status[mod_rel] == "done", "module notes counted", status)
+    check(status[mod_rel] == "incomplete: some sources unavailable", "module notes disclose unavailable sources", status)
     first_doc = notes.progress(lib, course="FIN")["courses"][0]["todo"][0]
     lib_doc = notes._load(lib, lib.root / (first_doc["path"] + ("" if first_doc["path"].endswith(".md") else ".md")), "")
     cites = ", ".join(lib_doc.units[i].name for i in range(len(lib_doc.units))) or "Page 1"

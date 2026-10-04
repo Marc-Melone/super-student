@@ -7,6 +7,8 @@ from pathlib import Path
 from typing import List, Optional
 
 from .extract import IMAGE_EXT, PDFLIKE_EXT, VIEWABLE_IMAGE_EXT, assets_dir_for, office_pdf, soffice_path
+from .library import LibraryPathError
+from .util import file_digest
 
 OFFICE_EXT = {".pptx", ".ppt", ".pps", ".ppsx", ".odp", ".key", ".docx", ".doc", ".odt", ".rtf", ".xlsx", ".xls", ".ods"}
 TARGET_LONG_EDGE = 1500  # Claude works best with images up to roughly this size
@@ -25,21 +27,22 @@ def _original_for(path: Path) -> Path:
 
 
 def _converted_pdf(lib, source: Path) -> Optional[Path]:
-    st = source.stat()
-    digest = hashlib.sha1(f"{source}|{st.st_mtime}|{st.st_size}|v2".encode()).hexdigest()[:16]
-    cache = lib.meta / "converted"
-    target = cache / f"{digest}.pdf"
+    digest = hashlib.sha1(f"{source}|{file_digest(source)}|v2".encode()).hexdigest()[:16]
+    cache = lib.checked(lib.meta / "converted")
+    target = lib.checked(cache / f"{digest}.pdf")
     if target.exists():
         return target
-    failed = cache / f"{digest}.failed"
+    failed = lib.checked(cache / f"{digest}.failed")
     if failed.exists():                     # already tried: don't make every look wait for LibreOffice again
         return None
-    produced = office_pdf(source, cache / digest)
+    conversion_dir = lib.checked(cache / digest)
+    lib.checked(conversion_dir / (source.stem + ".pdf"))
+    produced = office_pdf(source, conversion_dir)
     if not produced:
         cache.mkdir(parents=True, exist_ok=True)
         failed.write_text("LibreOffice couldn't make a matching PDF\n", encoding="utf-8")
         return None
-    produced.replace(target)
+    lib.checked(produced).replace(target)
     try:
         (cache / digest).rmdir()
     except OSError:
@@ -67,12 +70,11 @@ def _fit_image(lib, source: Path) -> Path:
         orientation = im.getexif().get(0x0112, 1) if hasattr(im, "getexif") else 1
         if ext in VIEWABLE_IMAGE_EXT and max(im.size) <= MODEL_LONG_EDGE and orientation in (0, 1):
             return source
-        st = source.stat()
-        key = hashlib.sha1(f"{source}|{st.st_mtime}|{st.st_size}|fit2".encode()).hexdigest()[:16]
+        key = hashlib.sha1(f"{source}|{file_digest(source)}|fit2".encode()).hexdigest()[:16]
         jpeg = ext in (".jpg", ".jpeg", ".heic", ".heif") or im.mode == "CMYK"
-        out = lib.renders / f"{key}-fit{'.jpg' if jpeg else '.png'}"
+        out = lib.checked(lib.renders / f"{key}-fit{'.jpg' if jpeg else '.png'}")
         if not out.exists():
-            lib.renders.mkdir(parents=True, exist_ok=True)
+            out.parent.mkdir(parents=True, exist_ok=True)
             im.seek(0)
             pic = ImageOps.exif_transpose(im)
             pic = pic.convert("RGB") if jpeg else (pic.convert("RGBA") if pic.mode not in ("RGB", "RGBA", "L", "LA") else pic)
@@ -87,11 +89,10 @@ def _with_sips(lib, source: Path) -> Optional[Path]:
 
     if not shutil.which("sips"):
         return None
-    st = source.stat()
-    key = hashlib.sha1(f"{source}|{st.st_mtime}|{st.st_size}|sips".encode()).hexdigest()[:16]
-    out = lib.renders / f"{key}-fit.jpg"
+    key = hashlib.sha1(f"{source}|{file_digest(source)}|sips".encode()).hexdigest()[:16]
+    out = lib.checked(lib.renders / f"{key}-fit.jpg")
     if not out.exists():
-        lib.renders.mkdir(parents=True, exist_ok=True)
+        out.parent.mkdir(parents=True, exist_ok=True)
         res = subprocess.run(["sips", "-s", "format", "jpeg", "-Z", str(MODEL_LONG_EDGE), str(source), "--out", str(out)],
                              capture_output=True, timeout=60)
         if res.returncode != 0 or not out.exists():
@@ -130,9 +131,8 @@ DRAWN_SUFFIX = "-drawn.png"   # slides drawn by Super Student itself (no LibreOf
 def _drawn_slide(lib, source: Path, page: int, long_edge: int) -> Path:
     from .slide_render import render_slide
 
-    st = source.stat()
-    key = hashlib.sha1(f"{source}|{st.st_mtime}|{st.st_size}|{page}|{long_edge}|v1".encode()).hexdigest()[:16]
-    out = lib.renders / f"{key}-s{page}{DRAWN_SUFFIX}"
+    key = hashlib.sha1(f"{source}|{file_digest(source)}|{page}|{long_edge}|v1".encode()).hexdigest()[:16]
+    out = lib.checked(lib.renders / f"{key}-s{page}{DRAWN_SUFFIX}")
     if out.exists():
         return out
     try:
@@ -146,16 +146,25 @@ def _drawn_slide(lib, source: Path, page: int, long_edge: int) -> Path:
 
 def render(lib, rel_path: str, page: int = 1, long_edge: int = TARGET_LONG_EDGE) -> List[Path]:
     """Return image file(s) showing page/slide `page` (1-based) of the given library file."""
+    try:
+        return [lib.checked(p) for p in _render(lib, rel_path, page, long_edge)]
+    except LibraryPathError as exc:
+        raise RenderError(str(exc)) from exc
+
+
+def _render(lib, rel_path: str, page: int, long_edge: int) -> List[Path]:
     path = locate(lib, rel_path)
     if path is None or not path.exists():
         raise RenderError(f"Not found in the library: {rel_path}")
-    source = _original_for(path)
+    source = lib.checked(_original_for(path))
     ext = source.suffix.lower()
     if ext == ".svg":
         raise RenderError("Can't show SVG drawings as a picture here; its text version has any words in it.")
     if ext in IMAGE_EXT:
         try:
             return [_fit_image(lib, source)]
+        except LibraryPathError:
+            raise
         except RenderError:
             raise
         except Exception as exc:
@@ -173,15 +182,15 @@ def render(lib, rel_path: str, page: int = 1, long_edge: int = TARGET_LONG_EDGE)
         if pdf is None and ext == ".pptx":
             return [_drawn_slide(lib, source, page, long_edge)]
         if pdf is None:
-            images = sorted(assets_dir_for(source).glob(f"slide-{page:02d}-*")) if ext in (".ppt",) else []
+            images = sorted(lib.checked(assets_dir_for(source)).glob(f"slide-{page:02d}-*")) if ext in (".ppt",) else []
             if images:
                 return images
             raise RenderError("Rendering this file type needs LibreOffice (free: brew install --cask libreoffice). "
                               "The text version and any saved images are still available.")
     else:
         raise RenderError(f"Can't render '{ext}' files as images.")
-    key = hashlib.sha1(f"{source}|{source.stat().st_mtime}|{page}|{long_edge}".encode()).hexdigest()[:16]
-    out = lib.renders / f"{key}-p{page}.png"
+    key = hashlib.sha1(f"{source}|{file_digest(source)}|{page}|{long_edge}".encode()).hexdigest()[:16]
+    out = lib.checked(lib.renders / f"{key}-p{page}.png")
     if out.exists():
         return [out]
     import pymupdf
@@ -193,7 +202,7 @@ def render(lib, rel_path: str, page: int = 1, long_edge: int = TARGET_LONG_EDGE)
         longest_pt = max(pg.rect.width, pg.rect.height) or 1
         zoom = max(0.5, min(4.0, long_edge / longest_pt))
         pix = pg.get_pixmap(matrix=pymupdf.Matrix(zoom, zoom), alpha=False)
-        lib.renders.mkdir(parents=True, exist_ok=True)
+        out.parent.mkdir(parents=True, exist_ok=True)
         pix.save(str(out))
         return [out]
 
@@ -202,7 +211,10 @@ def page_count(lib, rel_path: str) -> Optional[int]:
     path = lib.resolve(rel_path)
     if path is None:
         return None
-    source = _original_for(path)
+    try:
+        source = lib.checked(_original_for(path))
+    except LibraryPathError:
+        return None
     if source.suffix.lower() in PDFLIKE_EXT:
         import pymupdf
 

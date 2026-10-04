@@ -125,6 +125,15 @@ def read_json(path: Path, default: Any = None) -> Any:
         return default
 
 
+def file_digest(path: Path) -> str:
+    """Identify a source by its bytes, including changes that keep its size and timestamp."""
+    digest = hashlib.sha256()
+    with path.open("rb") as source:
+        for block in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
 def now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 

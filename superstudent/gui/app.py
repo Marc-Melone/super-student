@@ -484,7 +484,11 @@ class App:
         if path.suffix.lower() == ".md":
             original = path.with_name(path.name[:-3])
             if original.exists() and not reveal:
-                path = original
+                from ..library import LibraryPathError
+                try:
+                    path = self.lib().checked(original)
+                except LibraryPathError:
+                    return {"ok": False, "message": "That path is outside the library."}
         if not reveal and path.is_file() and path.suffix.lower() not in SAFE_TO_OPEN:
             reveal = True      # a course file that could run something (.command, .pkg, .app…): show it, don't run it
         self.run_open(["-R", str(path)] if reveal else [str(path)])

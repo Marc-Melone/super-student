@@ -32,7 +32,12 @@ os.environ["SUPERSTUDENT_APP_DRYRUN"] = "1"       # the app records what it woul
 
 PASSED = []
 SKIPPED = []
-FONT = "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf"
+FONT = os.environ.get("SS_TEST_FONT") or ("/System/Library/Fonts/Supplemental/Arial.ttf" if sys.platform == "darwin"
+                                         else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf")
+if os.environ.get("SS_TEST_FONT"):
+    from superstudent import slide_render
+    slide_render.FONTS = {False: [FONT], True: [FONT]}  # deterministic drawing/OCR fixtures across platforms
+    slide_render._font.cache_clear()
 
 
 def check(cond, label, detail=""):

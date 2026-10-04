@@ -235,14 +235,17 @@ def install_library_guides(lib) -> None:
     """Instructions that Claude (CLAUDE.md, .claude/skills) and ChatGPT/Codex (AGENTS.md, .agents/skills)
     pick up automatically when the library folder is their working folder or project."""
     root: Path = lib.root
-    atomic_write_text(root / "CLAUDE.md", _with_cli(CLAUDE_MD, short=True))
-    atomic_write_text(root / "AGENTS.md", _with_cli(AGENTS_MD, short=True))
-    write_skill(root / ".claude" / "skills" / "super-student")
-    write_skill(root / ".agents" / "skills" / "super-student")
+    atomic_write_text(lib.checked(root / "CLAUDE.md"), _with_cli(CLAUDE_MD, short=True))
+    atomic_write_text(lib.checked(root / "AGENTS.md"), _with_cli(AGENTS_MD, short=True))
+    write_skill(lib.checked(root / ".claude" / "skills" / "super-student"), lib)
+    write_skill(lib.checked(root / ".agents" / "skills" / "super-student"), lib)
 
 
-def write_skill(folder: Path) -> Path:
+def write_skill(folder: Path, lib=None) -> Path:
     """The super-student skill: SKILL.md (always read) and study-pass.md (read only when studying)."""
-    atomic_write_text(folder / "SKILL.md", _with_cli(SKILL_MD))
-    atomic_write_text(folder / "study-pass.md", STUDY_MD)
+    paths = [folder / "SKILL.md", folder / "study-pass.md"]
+    if lib:
+        paths = [lib.checked(p) for p in paths]
+    atomic_write_text(paths[0], _with_cli(SKILL_MD))
+    atomic_write_text(paths[1], STUDY_MD)
     return folder / "SKILL.md"
