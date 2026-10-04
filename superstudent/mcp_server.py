@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any, List
 
 from .config import library_path, load_config
-from .library import Library
+from .library import Library, LibraryPathError
 from .util import fmt_dt, read_json
 
 INSTRUCTIONS = (
@@ -61,7 +61,7 @@ def format_hits(query: str, hits: List[dict]) -> str:
     order: List[str] = []
     for h in hits:
         h = dict(h, snippet=re.sub(r"\[([^\]]*)\]\([^)\s]*\)", r"\1", h["snippet"]))   # links: keep the words
-        key = " ".join(h["snippet"].split()).lower()
+        key = (" ".join(h["snippet"].split()).lower(), h.get("status", "current"))
         if key in seen_text and seen_text[key]["path"] != h["path"]:
             seen_text[key].setdefault("also", []).append(f"{h['path']} ({h['locator'] or 'start'})")
             continue
@@ -75,6 +75,10 @@ def format_hits(query: str, hits: List[dict]) -> str:
         first = groups[path][0]
         gone = " — REMOVED FROM CANVAS, may be out of date" if first.get("removed") else ""
         out.append(f"\n{n}. {first['title']} ({first['kind']}){gone}\n   path: {path}")
+        if first.get("message"):
+            out.append("   SOURCE WARNING: " + first["message"])
+        if first.get("last_successful_sync"):
+            out.append("   Last successful retrieval: " + first["last_successful_sync"])
         for h in groups[path]:
             out.append(f"   [{h['locator'] or 'start'}] {h['snippet']}")
             if h.get("also"):
@@ -123,7 +127,8 @@ def build_server():
         state = lib.load_state()
         lines = []
         for cid, c in sorted(state.get("courses", {}).items(), key=lambda kv: (kv[1].get("term") or "", kv[1].get("name") or "")):
-            if not c.get("folder") or not (lib.root / c["folder"]).exists():
+            cdir = lib.resolve(c.get("folder") or "")
+            if cdir is None or not cdir.is_dir():
                 continue
             items = c.get("items") or {}
             pending = sum(1 for k, it in items.items() if k.startswith(("media:", "file:")) and it.get("status") == "pending")
@@ -183,7 +188,10 @@ def build_server():
             key, part = "outline", "".join(ch for ch in key.split(":", 1)[1] if ch.isdigit())
         if key.startswith("module"):
             num = "".join(ch for ch in key if ch.isdigit())
-            mods = sorted((lib.root / folder / "Modules").glob(f"{int(num):02d} - *")) if num else []
+            module_root = lib.resolve(f"{folder}/Modules")
+            if module_root is None:
+                return "That path is outside the library."
+            mods = sorted(module_root.glob(f"{int(num):02d} - *")) if num else []
             if not mods:
                 return f"No module {num or '?'} in {folder}."
             target = mods[0] / "_Module Contents.md"
@@ -192,6 +200,10 @@ def build_server():
         else:
             return (f"Unknown course file {file!r}. Use one of: {', '.join(sorted(set(names)))}, outline:<n> "
                     "or module:<n>.")
+        try:
+            target = lib.checked(target)
+        except LibraryPathError as exc:
+            return str(exc)
         if not target.exists():
             return f"{target.name} doesn't exist for this course yet."
         from .compact import compact
@@ -209,7 +221,8 @@ def build_server():
             page += (f"\n\n[… {len(text) - start - COURSE_FILE_PAGE} more characters. Continue with start="
                      f"{start + COURSE_FILE_PAGE}" + (", or ask for one module with file='outline:<n>'" if key == "outline" else "")
                      + ".]")
-        return PREFIX + page
+        from .index import freshness_warning
+        return PREFIX + freshness_warning(lib, target.relative_to(lib.root).as_posix()) + page
 
     @tool()
     def list_files(course: str = "", folder: str = "") -> str:
@@ -237,7 +250,7 @@ def build_server():
         """See a page, slide or image as a picture (whole slide as laid out). Use for anything marked visual
         and for lecture 'Screen at' images. `page`: 1-based page/slide; `pages`: several at once, e.g. '3-6' or
         '2,5,9' (up to 6)."""
-        from .render import DRAWN_SUFFIX, RenderError, render
+        from .render import DRAWN_SUFFIX, RenderError, _original_for, locate, render
 
         nums = _page_numbers(pages) if pages else [int(page or 1)]
         if not nums:
@@ -250,6 +263,16 @@ def build_server():
         content: List[Any] = []
         files: List[str] = []
         drawn = False
+        from .index import freshness_warning
+        lib = _lib()
+        found = locate(lib, path)
+        try:
+            source = lib.checked(_original_for(found)) if found else None
+        except LibraryPathError as exc:
+            return str(exc)
+        warning = freshness_warning(lib, source.relative_to(lib.root).as_posix()) if source else ""
+        if warning:
+            content.append(warning)
         for n in nums[:6]:
             try:
                 images = render(_lib(), path, page=n)
@@ -389,7 +412,8 @@ def _find_course(lib: Library, query: str) -> str:
     for cid, c in state.get("courses", {}).items():
         folder = c.get("folder") or ""
         hay = _simple(f"{cid} {c.get('name', '')} {c.get('code', '')} {folder}")
-        if q and q in hay and (lib.root / folder).exists():
+        cdir = lib.resolve(folder)
+        if q and q in hay and cdir is not None and cdir.is_dir():
             if not best or len(folder) < len(best):
                 best = folder
     return best

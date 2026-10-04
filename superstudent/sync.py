@@ -127,7 +127,7 @@ class Syncer:
             self.report["courses"] = [cs.summary() for cs in self.courses]
             from .util import atomic_write_json
 
-            atomic_write_json(self.lib.last_sync_path, self.report)
+            atomic_write_json(self.lib.checked(self.lib.last_sync_path), self.report)
             self.lib.log(f"sync ok: {len(self.courses)} courses, {self.cv.calls} API calls, "
                          f"{self.report['seconds']}s, errors={len(self.report['errors'])}")
         return self.report
@@ -217,7 +217,7 @@ class CourseSync:
         cstate["name"] = self.title
         cstate["code"] = course.get("course_code") or ""
         cstate["term"] = (course.get("term") or {}).get("name") or ""
-        self.dir = syncer.lib.root / self.folder
+        self.dir = syncer.lib.checked(syncer.lib.root / self.folder)
         self.old = syncer.lib.load_snapshot(self.cid)
         self.snap: Dict[str, Any] = {}
         self.stats: Counter = Counter()
@@ -247,11 +247,14 @@ class CourseSync:
         self.linked_pages: Dict[str, str] = {}       # page slugs other content links to -> where the link is
         self.fetched_pages: Set[str] = set()
         self.module_fallback: Set[str] = set()       # kinds fetched one by one because their list failed
-        self.cache_dir = syncer.lib.meta / "cache" / self.cid
+        self.cache_dir = syncer.lib.checked(syncer.lib.meta / "cache" / self.cid)
         self.completed = False
         self.written_docs: List[Tuple[str, str, Dict[str, Any], str]] = []
 
     # ------------------------------------------------------------------ helpers
+    def _write(self, path: Path, text: str) -> bool:
+        return atomic_write_text(self.s.lib.checked(path), text)
+
     def _folder_name(self) -> str:
         term = (self.course.get("term") or {}).get("name") or ""
         if not term or term.lower() in ("default term", "default"):
@@ -311,19 +314,19 @@ class CourseSync:
         if prev.startswith(REMOVED_DIR + "/"):          # it's back on Canvas
             it = self.items.get(key) or {}
             text = new_rel if new_rel.endswith(".md") and not it.get("text") else new_rel + ".md"
-            _unstamp_removed(self.dir / text)
+            _unstamp_removed(self.s.lib.checked(self.dir / text))
 
     def _move_files(self, prev: str, new_rel: str) -> None:
         """Move an item's original, text version, pictures and unzipped folder, and what the AI wrote about it."""
         for suffix in ("", ".md", ".assets", " (unzipped)"):
-            old = self.dir / (prev + suffix)
-            new = self.dir / (new_rel + suffix)
+            old = self.s.lib.checked(self.dir / (prev + suffix))
+            new = self.s.lib.checked(self.dir / (new_rel + suffix))
             if (suffix == "" or not prev.endswith(".md")) and old.exists() and not new.exists():
                 new.parent.mkdir(parents=True, exist_ok=True)
                 os.replace(old, new)
         if prev.endswith(".md") and new_rel.endswith(".md"):
-            old_assets = self.dir / (prev[:-3] + ".assets")
-            new_assets = self.dir / (new_rel[:-3] + ".assets")
+            old_assets = self.s.lib.checked(self.dir / (prev[:-3] + ".assets"))
+            new_assets = self.s.lib.checked(self.dir / (new_rel[:-3] + ".assets"))
             if old_assets.exists() and not new_assets.exists():
                 os.replace(old_assets, new_assets)
         lib_old, lib_new = f"{self.folder}/{prev}", f"{self.folder}/{new_rel}"
@@ -347,14 +350,14 @@ class CourseSync:
 
     # ------------------------------------------------------------------ rendered-doc cache
     def _cache_file(self, key: str) -> Path:
-        return self.cache_dir / (hashlib.sha1(key.encode("utf-8")).hexdigest()[:24] + ".json")
+        return self.s.lib.checked(self.cache_dir / (hashlib.sha1(key.encode("utf-8")).hexdigest()[:24] + ".json"))
 
     def cache_save(self, key: str, meta: Dict[str, Any], body: str) -> None:
         """Keep a page's or discussion's Markdown (with its Canvas link placeholders) so an unchanged one can be
         re-linked on later syncs without asking Canvas for it again."""
         try:
             text = json.dumps({"key": key, "meta": meta, "body": body}, ensure_ascii=False, sort_keys=True)
-            atomic_write_text(self._cache_file(key), text)
+            self._write(self._cache_file(key), text)
         except OSError:
             pass
 
@@ -384,8 +387,8 @@ class CourseSync:
     def run(self) -> None:
         self.s.log(f"• {self.course_label()}")
         self.dir.mkdir(parents=True, exist_ok=True)
-        (self.dir / "My Files").mkdir(exist_ok=True)
-        (self.dir / "_Study").mkdir(exist_ok=True)   # where the AI saves study guides it makes; sync never touches it
+        self.s.lib.checked(self.dir / "My Files").mkdir(exist_ok=True)
+        self.s.lib.checked(self.dir / "_Study").mkdir(exist_ok=True)   # where the AI saves study guides it makes; sync never touches it
         steps = [self.load_tabs, self.crawl_modules, self.crawl_front_and_syllabus, self.crawl_pages,
                  self.crawl_assignments, self.crawl_quizzes, self.crawl_discussions, self.crawl_announcements,
                  self.crawl_linked_pages, self.crawl_calendar, self.crawl_files, self.crawl_media_listing,
@@ -609,7 +612,8 @@ class CourseSync:
         module_label = placement[1] if placement and placement[2] is not None else ""
         context = f"Page: {meta.get('title') or prev.get('title') or url}"
         fresh = (prev.get("updated_at") and meta.get("updated_at") == prev.get("updated_at")
-                 and not prev.get("locked") and not prev.get("removed")
+                 and not prev.get("locked") and not meta.get("locked_for_user")
+                 and not prev.get("stale") and not prev.get("removed")
                  and prev.get("path") and (self.dir / prev["path"]).exists()
                  and prev.get("doc_version") == DOC_VERSION)
         cached = self.cache_load(key) if fresh else None
@@ -631,7 +635,11 @@ class CourseSync:
         except CanvasError as exc:
             gone = isinstance(exc, NotFoundError)
             if prev.get("path") and not gone:          # can't read it right now: keep what we have
-                self.seen(key)
+                it = self.seen(key)
+                restricted = isinstance(exc, ForbiddenError)
+                it.update(stale=True, locked=restricted)
+                self._mark_file_status(self.s.lib.checked(self.dir / prev["path"]),
+                                       "restricted" if restricted else "stale")
                 self.page_paths[url] = prev["path"]
                 self.absorb(Refs.from_json(prev.get("refs")), rel_dir, context, mpos)
             self.bump("pages_unavailable")
@@ -662,10 +670,12 @@ class CourseSync:
         it = self.seen(key)
         it.update({"path": rel, "title": title, "kind": "page", "updated_at": page.get("updated_at"),
                    "refs": refs.to_json(), "doc_version": DOC_VERSION, "locked": locked})
+        it.pop("stale", None)
         self.page_paths[url] = rel
         if alias:
             self.page_paths[alias] = rel
         self.pending_docs.append((key, rel, self.meta(title, "page", module=module_label,
+                                                        sync_status="restricted" if locked else "current",
                                                         updated=fmt_dt(page.get("updated_at")),
                                                         canvas_url=page.get("html_url") or self.canvas_url("page", url)), md))
         self.absorb(refs, rel_dir, f"Page: {title}", mpos)
@@ -1372,32 +1382,40 @@ class CourseSync:
     def _process_one(self, fid: str, meta: Dict[str, Any], rel: str, prev: Dict[str, Any]) -> None:
         key = f"file:{fid}"
         it = self.item(key)
-        original = self.dir / rel
-        sidecar = self.dir / (rel + ".md")
+        original = self.s.lib.checked(self.dir / rel)
+        sidecar = self.s.lib.checked(self.dir / (rel + ".md"))
+        self.s.lib.checked(original.with_name(original.name + ".assets"))
         updated = meta.get("modified_at") or meta.get("updated_at") or ""
         size = meta.get("size")
         stamp = f"{updated}|{size}"
+        it["attempted_stamp"] = stamp
+        if prev.get("status") == "ok":
+            it.setdefault("successful_stamp", prev.get("stamp"))
+            it.setdefault("last_successful_sync", self.cstate.get("last_sync") or "")
         have_file = prev.get("stamp") == stamp and prev.get("status") == "ok" and original.exists()
-        if have_file and prev.get("path") == rel and sidecar.exists() and prev.get("extractor") == EXTRACTOR_VERSION:
-            self.bump("files_unchanged")
-            return
         title = meta.get("display_name") or original.name
         context = ", ".join(self.file_contexts.get(fid, [])[:3])
         doc_meta = self.meta(title, "file", source_file=original.name, found_in=context,
                              canvas_url=self.canvas_url("file", fid), canvas_updated=fmt_dt(updated),
                              size=human_size(size))
-        if not have_file and (meta.get("locked_for_user") or not meta.get("url")):
+        if meta.get("locked_for_user") or not meta.get("url"):
             reason = meta.get("lock_explanation") or "Canvas didn't provide a download link (locked or hidden)"
-            it.update({"status": "locked", "error": reason, "stamp": stamp})
+            it.update({"status": "locked", "error": reason, "stale": True})
             if not original.exists():
-                atomic_write_text(sidecar, front_matter(doc_meta) + f"# {title}\n\n_Not downloaded: {reason}_\n")
+                self._write(sidecar, front_matter(doc_meta) + f"# {title}\n\n_Not downloaded: {reason}_\n")
+            self._mark_file_status(sidecar, "restricted")
             self.bump("files_locked")
+            return
+        if have_file and prev.get("path") == rel and sidecar.exists() and prev.get("extractor") == EXTRACTOR_VERSION:
+            self.bump("files_unchanged")
             return
         max_mb = float(self.cfg.get("max_file_mb") or 400)
         if not have_file and size and size > max_mb * 1024 * 1024:
-            it.update({"status": "too_large", "error": f"{human_size(size)} is over the {max_mb:g} MB limit", "stamp": stamp})
-            atomic_write_text(sidecar, front_matter(doc_meta) + f"# {title}\n\n_Not downloaded: {human_size(size)} is over "
-                                                                f"the size limit (max_file_mb in settings)._\n")
+            it.update({"status": "too_large", "error": f"{human_size(size)} is over the {max_mb:g} MB limit", "stale": True})
+            if not sidecar.exists():
+                self._write(sidecar, front_matter(doc_meta) + f"# {title}\n\n_Not downloaded: {human_size(size)} is over "
+                                                                    f"the size limit (max_file_mb in settings)._\n")
+            self._mark_file_status(sidecar, "stale")
             self.bump("files_skipped")
             return
         if not have_file:
@@ -1408,12 +1426,17 @@ class CourseSync:
                 self.bump("files_downloaded")
                 it["content_type"] = info.get("content_type")
             except (DownloadError, CanvasError) as exc:
-                it.update({"status": "failed", "error": str(exc), "attempts": int(it.get("attempts") or 0) + 1})
+                it.update({"status": "failed", "error": str(exc), "attempts": int(it.get("attempts") or 0) + 1,
+                           "stale": True})
                 self.bump("files_failed")
-                if not original.exists():
-                    atomic_write_text(sidecar, front_matter(doc_meta) + f"# {title}\n\n_Download failed: {_reason(exc)}. "
+                if not sidecar.exists():
+                    self._write(sidecar, front_matter(doc_meta) + f"# {title}\n\n_Download failed: {_reason(exc)}. "
                                                                         f"It will be retried next sync._\n")
+                self._mark_file_status(sidecar, "stale")
                 return
+        it.update(successful_stamp=stamp, last_successful_sync=now_iso())
+        it.pop("stale", None)
+        it.pop("error", None)
         with self.s.extract_lock:  # PyMuPDF isn't thread-safe
             try:
                 result = extract(original, meta.get("content-type") or it.get("content_type"))
@@ -1422,7 +1445,7 @@ class CourseSync:
                 error = f"{exc.__class__.__name__}: {exc}"
         if result is None:
             it.update({"status": "ok", "extract_error": error, "stamp": stamp, "extractor": EXTRACTOR_VERSION})
-            atomic_write_text(sidecar, front_matter(doc_meta) + f"# {title}\n\n_Couldn't extract text ({error}). "
+            self._write(sidecar, front_matter(doc_meta) + f"# {title}\n\n_Couldn't extract text ({error}). "
                                                                 f"Open the original: {original.name}_\n")
             return
         if result.kind == "archive":
@@ -1437,15 +1460,27 @@ class CourseSync:
         if result.visual_units:
             header += "\n\n> Some pages or slides are visual (see the '> Visual content' markers). " \
                       "Open those as images before relying on the text for charts, diagrams or equations."
-        atomic_write_text(sidecar, front_matter(doc_meta) + header + "\n\n" + body + "\n")
+        self._write(sidecar, front_matter(doc_meta) + header + "\n\n" + body + "\n")
         it.update({"status": "ok", "stamp": stamp, "extractor": EXTRACTOR_VERSION, "kind": result.kind,
                    "visual": len(result.visual_units)})
         it.pop("error", None)
         self.bump("files_extracted")
 
+    def _mark_file_status(self, sidecar: Path, status: str) -> None:
+        """Keep the previous text as a labeled historical copy, including when opened directly."""
+        from .util import parse_front_matter
+        if not sidecar.is_file():
+            return
+        meta, body = parse_front_matter(sidecar.read_text(encoding="utf-8"))
+        body = re.sub(r"^> \*\*Source warning:\*\*.*\n\n?", "", body, flags=re.M)
+        meta["sync_status"] = status
+        message = ("Canvas now marks this file locked or restricted; this is a historical copy."
+                   if status == "restricted" else "The latest source update did not complete; this is an older copy.")
+        self._write(sidecar, front_matter(meta) + "> **Source warning:** " + message + "\n\n" + body)
+
     def process_my_files(self) -> None:
         """Index whatever the student drops into '<course>/My Files' (notes, textbook PDFs, recordings)."""
-        root = self.dir / "My Files"
+        root = self.s.lib.checked(self.dir / "My Files")
         if not root.exists():
             return
         present = set()
@@ -1458,10 +1493,12 @@ class CourseSync:
             rel = path.relative_to(self.dir).as_posix()
             key = f"mine:{rel}"
             present.add(key)
+            path = self.s.lib.checked(path)
+            self.s.lib.checked(path.with_name(path.name + ".assets"))
             st = path.stat()
             stamp = f"{int(st.st_mtime)}|{st.st_size}"
             it = self.item(key)
-            sidecar = path.with_name(path.name + ".md")
+            sidecar = self.s.lib.checked(path.with_name(path.name + ".md"))
             kind = kind_of(path)
             if kind == "media":
                 it.update({"path": rel, "text": rel + ".md", "title": path.name, "kind": "media"})
@@ -1490,7 +1527,7 @@ class CourseSync:
                 doc_meta.update({"type": result.kind, "length": result.units, "notes": "; ".join(result.notes),
                                  "visual_content": ", ".join(result.visual_units[:40])})
                 body = describe.merge_into(self.s.lib, path, result.body or "_No text found in this file._")
-            atomic_write_text(sidecar, front_matter(doc_meta) + f"# {path.name}\n\nOriginal file: {path.name}\n\n{body}\n")
+            self._write(sidecar, front_matter(doc_meta) + f"# {path.name}\n\nOriginal file: {path.name}\n\n{body}\n")
             it.update({"path": rel, "text": rel + ".md", "title": path.name, "stamp": stamp, "status": "ok",
                        "extractor": EXTRACTOR_VERSION, "kind": result.kind if result else "file",
                        "visual": len(result.visual_units) if result else 0})
@@ -1498,16 +1535,17 @@ class CourseSync:
         for key in [k for k in list(self.items) if k.startswith("mine:") and k not in present]:
             it = self.items.pop(key)
             if it.get("text"):
-                side = self.dir / it["text"]
+                side = self.s.lib.checked(self.dir / it["text"])
                 if side.exists():
                     side.unlink()
-                shutil.rmtree(self.dir / (it["text"][:-3] + ".assets"), ignore_errors=True)
-                shutil.rmtree(self.dir / (it.get("path", "") + ".assets"), ignore_errors=True)
+                shutil.rmtree(self.s.lib.checked(self.dir / (it["text"][:-3] + ".assets")), ignore_errors=True)
+                shutil.rmtree(self.s.lib.checked(self.dir / (it.get("path", "") + ".assets")), ignore_errors=True)
 
     def _unpack(self, archive: Path, doc_meta: Dict[str, Any], title: str) -> None:
         import zipfile
 
-        target = archive.parent / (archive.name + " (unzipped)")
+        archive = self.s.lib.checked(archive)
+        target = self.s.lib.checked(archive.parent / (archive.name + " (unzipped)"))
         listing = []
         total = 0
         try:
@@ -1524,7 +1562,8 @@ class CourseSync:
                     parts = [safe_name(p, 80) for p in name.split("/") if p not in ("", ".", "..")]
                     if not parts:
                         continue
-                    out = target.joinpath(*parts)
+                    out = self.s.lib.checked(target.joinpath(*parts))
+                    self.s.lib.checked(out.with_name(out.name + ".assets"))
                     out.parent.mkdir(parents=True, exist_ok=True)
                     with zf.open(m) as src, open(out, "wb") as dst:
                         shutil.copyfileobj(src, dst)
@@ -1539,19 +1578,32 @@ class CourseSync:
                         inner_meta = dict(doc_meta)
                         inner_meta.update({"title": out.name, "type": res.kind, "source_file": out.name,
                                            "found_in": f"{title} (zip)", "length": res.units})
-                        atomic_write_text(out.parent / (out.name + ".md"),
+                        self._write(out.parent / (out.name + ".md"),
                                           front_matter(inner_meta) + f"# {out.name}\n\n" + (res.body or "_No text._") + "\n")
         except (zipfile.BadZipFile, OSError) as exc:
             listing.append(f"(couldn't unpack: {exc})")
         doc_meta.update({"type": "archive"})
-        atomic_write_text(archive.parent / (archive.name + ".md"), front_matter(doc_meta) + f"# {title}\n\n"
+        self._write(archive.parent / (archive.name + ".md"), front_matter(doc_meta) + f"# {title}\n\n"
                           f"Unpacked into '{target.name}/':\n\n" + "\n".join(f"- {x}" for x in listing[:500]) + "\n")
 
     # ------------------------------------------------------------------ media jobs (called by Syncer)
     def media_up_to_date(self, job: Dict[str, Any]) -> bool:
-        it = self.items.get(job["key"]) or {}
-        out = self.dir / job["rel_md"]
-        if it.get("status") == "ok" and out.exists() and it.get("stamp") == job.get("stamp"):
+        it = self.item(job["key"])
+        out = self.s.lib.checked(self.dir / job["rel_md"])
+        it["attempted_stamp"] = job.get("stamp")
+        if it.get("status") == "ok":
+            it.setdefault("successful_stamp", it.get("stamp"))
+            it.setdefault("last_successful_sync", self.cstate.get("last_sync") or "")
+        meta = self.file_meta.get(str(job.get("file_id"))) or {}
+        if meta.get("locked_for_user") or job.get("locked_for_user"):
+            it.update(status="locked", stale=True)
+            if not out.exists():
+                self._write(out, front_matter(self.meta(job["title"], "transcript", sync_status="restricted")) +
+                            f"# {job['title']}\n\n_Not downloaded: Canvas marks this recording locked or restricted._\n")
+            self._mark_file_status(out, "restricted")
+            job["done"] = True
+            return True
+        if it.get("status") == "ok" and not it.get("stale") and out.exists() and it.get("stamp") == job.get("stamp"):
             job["done"] = True
             return True
         if job["type"] == "youtube" and it.get("status") == "failed" and int(it.get("attempts") or 0) >= 3:
@@ -1569,7 +1621,7 @@ class CourseSync:
 
     def _write_transcript(self, job: Dict[str, Any], segments: List[Segment], source: str,
                           frames: Optional[list] = None, duration: Optional[float] = None, extra: str = "") -> None:
-        out = self.dir / job["rel_md"]
+        out = self.s.lib.checked(self.dir / job["rel_md"])
         feedback = all(str(c).startswith("Feedback on:") for c in job.get("contexts") or ["x"])
         meta = self.meta(job["title"], "feedback" if feedback else "transcript", source=source,
                          duration=fmt_ts(duration or (segments[-1].end if segments else 0)),
@@ -1583,10 +1635,14 @@ class CourseSync:
         if extra:
             header += "\n\n" + extra
         body = transcript_markdown(segments, frames or [])
-        atomic_write_text(out, front_matter(meta) + header + "\n\n" + (body or "_No speech detected._") + "\n")
+        self._write(out, front_matter(meta) + header + "\n\n" + (body or "_No speech detected._") + "\n")
         it = self.item(job["key"])
-        it.update({"status": "ok", "stamp": job.get("stamp"), "source": source, "frames": len(frames or [])})
+        it.update({"status": "ok", "stamp": job.get("stamp"), "source": source, "frames": len(frames or []),
+                   "successful_stamp": job.get("stamp"), "attempted_stamp": job.get("stamp"),
+                   "last_successful_sync": now_iso()})
         it.pop("error", None)
+        it.pop("stale", None)
+        it.pop("note", None)
         job["done"] = True
         self.bump("media_done")
 
@@ -1634,7 +1690,7 @@ class CourseSync:
                 it = self.item(job["key"])
                 it.update({"status": "failed", "error": f"No YouTube transcript ({exc.__class__.__name__})",
                            "attempts": int(it.get("attempts") or 0) + 1})
-                atomic_write_text(self.dir / job["rel_md"], front_matter(self.meta(job["title"], "transcript",
+                self._write(self.dir / job["rel_md"], front_matter(self.meta(job["title"], "transcript",
                                   url=f"https://www.youtube.com/watch?v={vid}")) +
                                   f"# {job['title']}\n\nYouTube video: https://www.youtube.com/watch?v={vid}\n\n"
                                   f"_No transcript available from YouTube._\n")
@@ -1653,14 +1709,19 @@ class CourseSync:
         if job.get("captions"):
             self._write_transcript(job, job["captions"], "Canvas captions")
             return
-        out = self.dir / job["rel_md"]
+        out = self.s.lib.checked(self.dir / job["rel_md"])
         it = self.item(job["key"])
         if it.get("status") == "ok" and out.exists():
             it["note"] = f"newer version waiting: {reason}"   # keep the old transcript until the new one is ready
+            it.setdefault("successful_stamp", it.get("stamp"))
+            it["attempted_stamp"] = job.get("stamp")
+            if it.get("stamp") != job.get("stamp"):
+                it["stale"] = True
+                self._mark_file_status(out, "stale")
             self.bump("media_pending")
             return
         it.update({"status": "pending", "error": reason})
-        atomic_write_text(out, front_matter(self.meta(job["title"], "transcript")) +
+        self._write(out, front_matter(self.meta(job["title"], "transcript")) +
                           f"# {job['title']} (transcript pending)\n\n_Not transcribed yet: {reason}._\n")
         self.bump("media_pending")
 
@@ -1674,9 +1735,9 @@ class CourseSync:
         attempts = int(it.get("attempts") or 0) + 1 if it.get("stamp") == job.get("stamp") else 1
         it.update({"status": "failed", "error": f"{exc.__class__.__name__}: {exc}", "attempts": attempts,
                    "stamp": job.get("stamp")})
-        out = self.dir / job["rel_md"]
+        out = self.s.lib.checked(self.dir / job["rel_md"])
         if not out.exists():             # say so where the transcript would be, so nothing silently goes missing
-            atomic_write_text(out, front_matter(self.meta(job["title"], "transcript")) +
+            self._write(out, front_matter(self.meta(job["title"], "transcript")) +
                               f"# {job['title']} (no transcript yet)\n\n_Couldn't make a transcript: {_reason(exc)}. "
                               f"Super Student tries again on the next syncs._\n")
         self.warn(f"Media '{job['title']}': {exc}")
@@ -1715,14 +1776,16 @@ class CourseSync:
                 return
             raise DownloadError(f"too large to download ({human_size(size)}; the limit is max_media_mb = {max_mb:g} MB)")
         keep = bool(self.cfg.get("keep_media_files")) and job.get("rel_media")
-        tmp_dir = self.s.lib.meta / "tmp"
+        tmp_dir = self.s.lib.checked(self.s.lib.meta / "tmp")
         tmp_dir.mkdir(parents=True, exist_ok=True)
         target = (self.dir / job["rel_media"]) if keep else tmp_dir / f"media-{abs(hash(job['key']))}{Path(job.get('rel_media') or job['title']).suffix or '.mp4'}"
+        target = self.s.lib.checked(target)
         self.s.log(f"  ⤓ {job['title']} ({human_size(job.get('size'))})")
         self.cv.download(url, target, max_bytes=int(max_mb * 1024 * 1024), file_id=job.get("file_id"))
         self._transcribe_file(job, target, keep=bool(keep))
 
     def _transcribe_file(self, job: Dict[str, Any], target: Path, keep: bool) -> None:
+        target = self.s.lib.checked(target)
         try:
             duration = media_duration(target)
             segments = job.get("captions")
@@ -1735,7 +1798,7 @@ class CourseSync:
             frames = []
             if job.get("is_video") and self.cfg.get("screen_snapshots", True):
                 rel_md = job["rel_md"]
-                assets = self.dir / (rel_md[:-3] + ".assets")
+                assets = self.s.lib.checked(self.dir / (rel_md[:-3] + ".assets"))
                 shutil.rmtree(assets, ignore_errors=True)
                 frames = extract_keyframes(target, assets)
             self._write_transcript(job, segments, source, frames=frames, duration=duration)
@@ -1795,7 +1858,7 @@ class CourseSync:
                 rel = (self.items.get(key) or {}).get("path") or rel
             text = front_matter(meta) + f"# {meta.get('title')}\n\n" + self.rewrite_tokens(body, rel).strip() + "\n"
             try:
-                if atomic_write_text(self.dir / rel, text):
+                if self._write(self.dir / rel, text):
                     self.bump("docs_written")
             except OSError as exc:            # e.g. a name the disk won't take: skip this one, keep going
                 self.warn(f"Couldn't save '{rel}': {exc}")
@@ -1818,8 +1881,9 @@ class CourseSync:
                         notes.move(self.s.lib, f"{self.folder}/{before}", f"{self.folder}/{m['dir']}", exact=True)
                     except Exception:
                         pass
-            modules_root = self.dir / "Modules"
+            modules_root = self.s.lib.checked(self.dir / "Modules")
             for stale in (modules_root.glob("*/_Module Contents.md") if modules_root.is_dir() else []):
+                stale = self.s.lib.checked(stale)
                 if f"Modules/{stale.parent.name}" not in current:
                     try:
                         stale.unlink()
@@ -1880,7 +1944,7 @@ class CourseSync:
                 lines.append(entry + (f" ({'; '.join(extras)})" if extras else ""))
             text = front_matter(self.meta(f"Module {m['position']}: {m['name']}", "module")) + \
                 f"# Module {m['position']}: {m['name']}\n\n" + "\n".join(lines).strip() + "\n"
-            atomic_write_text(self.dir / doc_rel, text)
+            self._write(self.dir / doc_rel, text)
 
     # ------------------------------------------------------------------ finish
     def finish(self) -> None:
@@ -1956,7 +2020,7 @@ class CourseSync:
             it["path"] = target
             if it.get("text"):
                 it["text"] = target + ".md"
-            _stamp_removed(self.dir / (it.get("text") or target), it.get("removed_on") or today)
+            _stamp_removed(self.s.lib.checked(self.dir / (it.get("text") or target)), it.get("removed_on") or today)
             moved += 1
         if moved:
             self.bump("removed_from_canvas", moved)

@@ -14,7 +14,8 @@ from datetime import date
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
-from .util import REMOVED_DIR, atomic_write_json, atomic_write_text, read_json
+from .util import REMOVED_DIR, atomic_write_json, atomic_write_text, file_digest, read_json
+from .library import LibraryPathError
 
 MARK = "> **What this shows**"
 HEADING = re.compile(r"^## \[(Page \d+|Slide \d+|Image)\]")
@@ -25,7 +26,7 @@ MAX_CHARS = 2500
 
 
 def _store_path(lib) -> Path:
-    return lib.meta / "descriptions.json"
+    return lib.checked(lib.meta / "descriptions.json")
 
 
 def load(lib) -> Dict[str, Dict[str, Dict[str, Any]]]:
@@ -41,6 +42,10 @@ def _files(lib, rel: str) -> Optional[Tuple[str, Path, Path]]:
         original, sidecar = path.with_name(path.name[:-3]), path
     else:
         original, sidecar = path, path.with_name(path.name + ".md")
+    try:
+        original, sidecar = lib.checked(original), lib.checked(sidecar)
+    except LibraryPathError:
+        return None
     if not original.is_file() or not sidecar.is_file():
         return None
     return original.relative_to(lib.root.resolve()).as_posix(), original, sidecar
@@ -119,10 +124,18 @@ def current(lib, rel_original: str, original: Path) -> Dict[str, Dict[str, Any]]
     """Descriptions for a file that still match it (a changed file's old descriptions are set aside)."""
     entries = load(lib).get(rel_original) or {}
     try:
-        size = original.stat().st_size
-    except OSError:
+        digest = file_digest(lib.checked(original))
+    except (OSError, LibraryPathError):
         return {}
-    return {u: e for u, e in entries.items() if e.get("size") == size and e.get("text")}
+    return {u: e for u, e in entries.items() if e.get("sha256") == digest and e.get("text")}
+
+
+def reading_text(lib, sidecar: Path, text: str) -> str:
+    """Hide obsolete descriptions even before the next sync rewrites a text version."""
+    if MARK not in text:
+        return text
+    found = _files(lib, sidecar.relative_to(lib.root).as_posix())
+    return apply(text, current(lib, found[0], found[1]) if found else {})
 
 
 def move(lib, old_rel: str, new_rel: str) -> None:
@@ -144,10 +157,17 @@ def merge_into(lib, original: Path, body: str) -> str:
     except ValueError:
         return body
     entries = current(lib, rel, original)
-    return apply(body, entries) if entries else body
+    return apply(body, entries)
 
 
 def save(lib, rel: str, where: str, description: str, by: str = "") -> Dict[str, Any]:
+    try:
+        return _save(lib, rel, where, description, by)
+    except LibraryPathError as exc:
+        return {"ok": False, "message": str(exc)}
+
+
+def _save(lib, rel: str, where: str, description: str, by: str = "") -> Dict[str, Any]:
     from .index import update_index
 
     found = _files(lib, rel)
@@ -168,7 +188,7 @@ def save(lib, rel: str, where: str, description: str, by: str = "") -> Dict[str,
     store = load(lib)
     store.setdefault(rel_original, {})[unit] = {
         "text": clean, "by": _clean(by)[:40] or "your AI", "date": date.today().isoformat(),
-        "size": original.stat().st_size,
+        "size": original.stat().st_size, "sha256": file_digest(original),
     }
     lib.ensure()
     atomic_write_json(_store_path(lib), store)
@@ -190,9 +210,9 @@ def _sidecars(lib, course: str = "") -> Iterable[Tuple[str, Path, Path]]:
             continue
         if wanted and wanted not in "/".join(parts[:2]).lower():
             continue
-        original = sidecar.with_name(sidecar.name[:-3])
-        if original.suffix and original.suffix.lower() != ".svg" and original.is_file():
-            yield original.relative_to(root).as_posix(), original, sidecar
+        found = _files(lib, rel)
+        if found and found[1].suffix and found[1].suffix.lower() != ".svg":
+            yield found
 
 
 def survey(lib, course: str = "", limit: int = 0) -> Dict[str, Any]:
@@ -210,8 +230,12 @@ def survey(lib, course: str = "", limit: int = 0) -> Dict[str, Any]:
         units = [(u, r) for u, r in visual_units(text) if worth_describing(r)]
         if not units:
             continue
-        size = original.stat().st_size
-        done = {u for u, e in (store.get(rel_original) or {}).items() if e.get("size") == size}
+        try:
+            digest = file_digest(original)
+        except OSError:
+            continue
+        done = {u for u, e in (store.get(rel_original) or {}).items()
+                if e.get("sha256") == digest and e.get("text")}
         for unit, reasons in units:
             total += 1
             if unit in done:

@@ -11,6 +11,7 @@ from typing import Dict, Iterable, Optional, Set
 from urllib.parse import unquote
 
 from .extract import office_pdf, soffice_path
+from .library import Library
 
 ORIGINAL_EXT = (".pdf", ".pptx", ".docx", ".xlsx", ".png", ".jpg", ".jpeg")
 LINK = re.compile(r"\[([^\]]*)\]\(([^)\s]+)\)")
@@ -34,7 +35,7 @@ def _href(rel: str) -> str:
 
 def make_pack(lib, folder: str, modules: Optional[Iterable[int]] = None, name: str = "",
               out: Optional[Path] = None, to_pdf: bool = False) -> Dict[str, object]:
-    course_dir = lib.root / folder
+    course_dir = lib.checked(lib.root / folder)
     wanted = set(modules) if modules is not None else None
     if not name:
         if wanted:
@@ -45,25 +46,31 @@ def make_pack(lib, folder: str, modules: Optional[Iterable[int]] = None, name: s
         else:
             name = "Whole course"
     target_root = Path(os.path.expanduser(str(out))) if out else lib.root / "_Exam Packs" / f"{Path(folder).name} - {name}"
+    target_root = target_root.resolve() if out else lib.checked(target_root)
+    export = Library(target_root)
     target_root.mkdir(parents=True, exist_ok=True)
     copied = 0
     size = 0
     for extra in ("COURSE_OVERVIEW.md", "EXAM_INTEL.md", "Syllabus.md", "CALENDAR.md"):
-        src = course_dir / extra
+        src = lib.checked(course_dir / extra)
         if src.exists():
-            shutil.copy2(src, target_root / extra)
+            shutil.copy2(src, export.checked(target_root / extra))
             copied += 1
-    notes_dir = course_dir / "Study Notes"
-    if (notes_dir / "_Course notes.md").exists():
-        shutil.copy2(notes_dir / "_Course notes.md", target_root / "Course notes (study pass).md")
+    notes_dir = lib.checked(course_dir / "Study Notes")
+    course_notes = lib.checked(notes_dir / "_Course notes.md")
+    if course_notes.exists():
+        shutil.copy2(course_notes, export.checked(target_root / "Course notes (study pass).md"))
         copied += 1
 
     def put(src: Path, dest: Path) -> Path:
         """Copy one file into the pack (slides and Word files as PDFs when asked). Returns where it went."""
         nonlocal copied, size
+        src, dest = lib.checked(src), export.checked(dest)
+        export.checked(dest.with_suffix(".pdf"))
         dest.parent.mkdir(parents=True, exist_ok=True)
         ext = src.suffix.lower()
         if to_pdf and ext in (".pptx", ".docx") and soffice_path():
+            export.checked(dest.parent / (src.stem + ".pdf"))
             converted = office_pdf(src, dest.parent)
             if converted:
                 size += converted.stat().st_size
@@ -84,17 +91,19 @@ def make_pack(lib, folder: str, modules: Optional[Iterable[int]] = None, name: s
         copied += 1
         return dest
 
-    modules_dir = course_dir / "Modules"
+    modules_dir = lib.checked(course_dir / "Modules")
     for mdir in sorted(modules_dir.iterdir()) if modules_dir.exists() else []:
         if not mdir.is_dir():
             continue
+        mdir = lib.checked(mdir)
         num = mdir.name.split(" - ")[0]
         if wanted is not None and (not num.isdigit() or int(num) not in wanted):
             continue
-        target = target_root / mdir.name
-        module_notes = notes_dir / "Modules" / mdir.name
+        target = export.checked(target_root / mdir.name)
+        module_notes = lib.checked(notes_dir / "Modules" / mdir.name)
         for src in sorted(module_notes.rglob("*.md")) if module_notes.exists() else []:
-            dest = target / "Study notes" / src.relative_to(module_notes)
+            dest = export.checked(target / "Study notes" / src.relative_to(module_notes))
+            src = lib.checked(src)
             dest.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(src, dest)
             size += src.stat().st_size

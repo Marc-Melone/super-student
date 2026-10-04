@@ -16,6 +16,7 @@ from urllib.parse import unquote
 
 from .util import front_matter, parse_front_matter
 from .util import atomic_write_text
+from .library import LibraryPathError
 
 NOTES_DIR = "Study Notes"
 HEADING = re.compile(r"^## \[(Slide \d+|Page \d+|Sheet: [^\]]+|\d{1,2}:\d{2}(?::\d{2})?)\]\s*(.*)$")
@@ -45,6 +46,7 @@ class Doc:
     kind: str = ""
     units: List[Unit] = field(default_factory=list)
     missing: str = ""    # why there's nothing to read (not downloaded, locked, couldn't be read)
+    root: Optional[Path] = None
 
     @property
     def visuals(self) -> List[Unit]:
@@ -52,8 +54,8 @@ class Doc:
 
 
 def _doc_for(lib, sidecar: Path) -> Tuple[str, Path]:
-    sidecar = sidecar.resolve()
-    original = sidecar.with_name(sidecar.name[:-3])
+    sidecar = lib.checked(sidecar)
+    original = lib.checked(sidecar.with_name(sidecar.name[:-3]))
     target = original if original.suffix and original.is_file() else sidecar
     return target.relative_to(lib.root.resolve()).as_posix(), sidecar
 
@@ -95,17 +97,26 @@ def parse_units(text: str) -> List[Unit]:
 
 def _load(lib, sidecar: Path, section: str) -> Optional[Doc]:
     try:
+        sidecar = lib.checked(sidecar)
+        rel, _ = _doc_for(lib, sidecar)
         text = sidecar.read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError):
+    except (OSError, UnicodeDecodeError, LibraryPathError):
         return None
+    from .describe import reading_text
+    text = reading_text(lib, sidecar, text)
     meta, body = parse_front_matter(text)
-    rel, _ = _doc_for(lib, sidecar)
     title = meta.get("title") or sidecar.name[:-3]
     missing = ""
     m = re.search(r"^_(Not downloaded|Download failed|Couldn't extract text)[:.]?\s*(.*?)_?$", body, re.M)
     if m and len(body) < 2000:
         missing = (m.group(1) + (": " + m.group(2).rstrip("._") if m.group(2) else "")).strip()
-    return Doc(rel, sidecar, title, section, (meta.get("type") or "").lower(), parse_units(body), missing)
+    from .index import material_status
+    availability = material_status(lib, rel)
+    if availability["status"] != "current":
+        missing = missing or availability["message"]
+    elif meta.get("sync_status") in ("stale", "restricted"):
+        missing = missing or "Source is " + meta["sync_status"] + "; update or check Canvas before studying it."
+    return Doc(rel, sidecar, title, section, (meta.get("type") or "").lower(), parse_units(body), missing, lib.root)
 
 
 QUIZ_REVIEW = "## Question review"
@@ -124,7 +135,7 @@ def course_documents(lib, course_dir: Path, include_light: bool = False) -> List
     """Every document in the course: module by module in the instructor's order, then everything else."""
     docs: List[Doc] = []
     seen = set()
-    course_dir = course_dir.resolve()
+    course_dir = lib.checked(course_dir)
     root = lib.root.resolve()
 
     def add(sidecar: Path, section: str) -> None:
@@ -142,12 +153,20 @@ def course_documents(lib, course_dir: Path, include_light: bool = False) -> List
             docs.append(doc)
 
     def wanted(sidecar: Path, top: str) -> bool:
+        try:
+            sidecar = lib.checked(sidecar)
+        except LibraryPathError:
+            return False
         return top in STUDY_SECTIONS or (include_light and top in LIGHT_SECTIONS) or (top == "Quizzes" and _has_review(sidecar))
 
-    modules_dir = course_dir / "Modules"
+    modules_dir = lib.checked(course_dir / "Modules")
     for mdir in sorted(p for p in modules_dir.iterdir() if p.is_dir()) if modules_dir.exists() else []:
         section = f"Modules/{mdir.name}"
-        contents = mdir / "_Module Contents.md"
+        try:
+            mdir = lib.checked(mdir)
+            contents = lib.checked(mdir / "_Module Contents.md")
+        except LibraryPathError:
+            continue
         if contents.exists():
             for _, target in LINK.findall(contents.read_text(encoding="utf-8")):
                 if "://" in target:
@@ -169,7 +188,9 @@ def course_documents(lib, course_dir: Path, include_light: bool = False) -> List
         if top == "Syllabus":
             add(course_dir / "Syllabus.md", "Syllabus")
             continue
-        folder = course_dir / top
+        folder = lib.resolve((course_dir / top).relative_to(lib.root).as_posix())
+        if folder is None:
+            continue
         for sidecar in sorted(folder.rglob("*.md")) if folder.exists() else []:
             parts = sidecar.relative_to(folder).parts
             if any(p.endswith(".assets") or p.startswith(".") for p in parts[:-1]):
@@ -244,7 +265,7 @@ def write_outline(lib, course_dir: Path, label: str, notes_status=None) -> Path:
             vis = [int(u.name.split()[1]) for u in (slides or pages) if u.visual]
             if vis:
                 lines.append(f"  - {'Slides' if slides else 'Pages'} with pictures: {_ranges(vis)}")
-    path = course_dir / "OUTLINE.md"
+    path = lib.checked(course_dir / "OUTLINE.md")
     meta = {"title": f"{label}: outline", "course": label, "type": "outline"}
     atomic_write_text(path, front_matter(meta) + "\n".join(lines) + "\n")
     return path

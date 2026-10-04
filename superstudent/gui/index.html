@@ -570,6 +570,7 @@ function tokenPanel(opts) {
   field.addEventListener("keydown", e => { if (e.key === "Enter") connect(); });
   setTimeout(() => field.focus(), 60);
   return el("div", null,
+    el("p", { class: "aside" }, "Personal use only while Canvas integration approval is unresolved. Connect only your own account. Onboarding other users requires approved OAuth access and integration approval."),
     el("ol", { class: "howto" },
       el("li", null, "Open your Canvas settings. Sign in if Canvas asks.",
         el("div", null, el("button", { class: "btn", onclick: () => openUrl(base + "/profile/settings") }, "Open Canvas settings"))),
@@ -940,6 +941,7 @@ function renderResults() {
         el("span", { class: "spacer" }),
         el("span", { class: "chip", style: "--c:" + courseColor(c ? c.id : h.course) }, c ? (c.code || c.name) : h.course)),
       el("p", { class: "snip" }, snippetNodes(h.snippet)),
+      h.message ? el("p", { class: "muted small" }, "Source warning: " + h.message) : null,
       el("div", { class: "row", style: "margin-left:-8px" },
         el("button", { class: "btn quiet small", onclick: () => openItem(h.path) }, "Open"),
         el("button", { class: "btn quiet small", onclick: () => openItem(h.path, true) }, "Show in Finder")));

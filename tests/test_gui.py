@@ -53,6 +53,8 @@ def main() -> None:
     import superstudent.gui.app as appmod
     appmod.ACCOUNT_SEARCH = base + "/api/v1/accounts/search"
     from superstudent.config import CONFIG_FILE, TOKEN_FILE, load_config, save_config
+    import superstudent.config as config
+    config._keychain_available = lambda: False  # never touch the real Mac Keychain in this isolated suite
 
     cfg = load_config()
     cfg["library_dir"] = str(WORK / "lib")
@@ -225,7 +227,8 @@ def main() -> None:
     print("\n== Uninstall")
     home = WORK / "home"
     codex_cfg.write_text('model = "gpt-5"\n\n[mcp_servers.other]\ncommand = "other"\n\n' + codex_cfg.read_text())
-    desk = home / ".config" / "Claude" / "claude_desktop_config.json"
+    from superstudent.assistants import claude_desktop_config
+    desk = claude_desktop_config()
     data = json.loads(desk.read_text())
     data["mcpServers"]["other"] = {"command": "other"}
     desk.write_text(json.dumps(data))

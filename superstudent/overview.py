@@ -128,6 +128,9 @@ def _is_exam(title: str) -> bool:
 # ---------------------------------------------------------------- course files
 
 def write_course_files(lib, cid: str, snap: Dict[str, Any], items: Dict[str, Dict[str, Any]], course_dir: Path) -> None:
+    course_dir = lib.checked(course_dir)
+    for name in ("COURSE_OVERVIEW.md", "CALENDAR.md", "GRADES.md", "EXAM_INTEL.md", "LINKS.md"):
+        lib.checked(course_dir / name)
     course = snap.get("course") or {}
     label = course.get("name") or "Course"
     if course.get("code") and course["code"].lower() not in label.lower():
@@ -139,7 +142,7 @@ def write_course_files(lib, cid: str, snap: Dict[str, Any], items: Dict[str, Dic
     rows = dated_items(snap)
     _write_calendar(course_dir, label, base_meta, rows)
     _write_grades(course_dir, label, base_meta, snap)
-    _write_exam_intel(course_dir, label, base_meta, snap, rows)
+    _write_exam_intel(course_dir, label, base_meta, snap, rows, lib)
     _write_links(course_dir, label, base_meta, snap)
     _write_overview(course_dir, label, base_meta, snap, items, rows)
 
@@ -442,7 +445,7 @@ def _doc_bucket(meta: Dict[str, str], path: Path) -> str:
 
 
 def _write_exam_intel(course_dir: Path, label: str, base_meta: Dict[str, Any], snap: Dict[str, Any],
-                      rows: List[Dict[str, Any]]) -> None:
+                      rows: List[Dict[str, Any]], lib) -> None:
     found: Dict[str, List[Tuple[str, str, str, str, int]]] = defaultdict(list)   # bucket -> (date, excerpt, where, link, weight)
     seen = set()
     teachers = {t for t in (snap.get("course") or {}).get("teachers") or [] if t}
@@ -452,10 +455,17 @@ def _write_exam_intel(course_dir: Path, label: str, base_meta: Dict[str, Any], s
                 or "Study Notes" in parts[:-1] or REMOVED_DIR in parts[:-1] or any(p.endswith(".assets") for p in parts[:-1]):
             continue
         try:
+            rel_library = path.relative_to(lib.root).as_posix()
+            path = lib.checked(path)
+            from .index import material_status
+            if material_status(lib, rel_library)["stale"]:
+                continue
             text = path.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
+        except (OSError, UnicodeDecodeError, ValueError):
             continue
         meta, body = parse_front_matter(text)
+        if meta.get("sync_status") in ("stale", "restricted"):
+            continue
         body = strip_blocks(body)          # AI-written picture descriptions aren't the instructor's words
         bucket = _doc_bucket(meta, path)
         date = meta.get("date") or ""
@@ -538,4 +548,4 @@ def write_library_index(lib, state: Dict[str, Any]) -> None:
         rows.append((c.get("term") or "", c.get("name") or cid, folder, c.get("last_sync")))
     for term, name, folder, last in sorted(rows, key=lambda r: (r[0], r[1])):
         out.append(f"| [{name}]({_link(folder + '/COURSE_OVERVIEW.md')}) | {term} | {folder} | {fmt_dt(last)} |")
-    atomic_write_text(lib.root / "INDEX.md", "\n".join(out) + "\n")
+    atomic_write_text(lib.checked(lib.root / "INDEX.md"), "\n".join(out) + "\n")

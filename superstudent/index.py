@@ -33,7 +33,8 @@ KIND_ALIASES["feedback"] = ["grades", "assignment", "feedback"]
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT);
-CREATE TABLE IF NOT EXISTS docs(path TEXT PRIMARY KEY, course TEXT, kind TEXT, title TEXT, mtime REAL, size INTEGER);
+CREATE TABLE IF NOT EXISTS docs(path TEXT PRIMARY KEY, course TEXT, kind TEXT, title TEXT, mtime REAL, size INTEGER,
+                               source_version TEXT);
 CREATE VIRTUAL TABLE IF NOT EXISTS chunks USING fts5(
     text, title, locator UNINDEXED, path UNINDEXED, course UNINDEXED, kind UNINDEXED, chunk UNINDEXED,
     doc_title UNINDEXED, tokenize = 'porter unicode61 remove_diacritics 2'
@@ -52,7 +53,16 @@ def connect(db_path: Path) -> sqlite3.Connection:
         conn.executescript(SCHEMA)
         conn.execute("INSERT OR REPLACE INTO meta(key, value) VALUES('version', ?)", (str(INDEX_VERSION),))
         conn.commit()
+    if "source_version" not in {r[1] for r in conn.execute("PRAGMA table_info(docs)")}:
+        conn.execute("ALTER TABLE docs ADD COLUMN source_version TEXT")
+        conn.commit()
     return conn
+
+
+def _connect(lib) -> sqlite3.Connection:
+    for suffix in ("", "-wal", "-shm", "-journal"):
+        lib.checked(Path(str(lib.index_path) + suffix))
+    return connect(lib.checked(lib.index_path))
 
 
 def _course_of(rel: str) -> str:
@@ -156,14 +166,17 @@ TEXT_VERSION = "4"   # bump when the indexed text changes shape, so every docume
 
 def update_index(lib, log: Optional[Callable[[str], None]] = None, full: bool = False) -> Dict[str, int]:
     from .compact import for_index
+    from . import describe
+    from .util import file_digest
 
-    conn = connect(lib.index_path)
+    conn = _connect(lib)
+    descriptions = describe.load(lib)
     row = conn.execute("SELECT value FROM meta WHERE key = 'text_version'").fetchone()
     if not row or row[0] != TEXT_VERSION:
         full = True
         with conn:
             conn.execute("INSERT OR REPLACE INTO meta(key, value) VALUES ('text_version', ?)", (TEXT_VERSION,))
-    known = {row[0]: (row[1], row[2]) for row in conn.execute("SELECT path, mtime, size FROM docs")}
+    known = {row[0]: (row[1], row[2], row[3]) for row in conn.execute("SELECT path, mtime, size, source_version FROM docs")}
     present = set()
     added = updated = removed = 0
     with conn:
@@ -171,13 +184,24 @@ def update_index(lib, log: Optional[Callable[[str], None]] = None, full: bool = 
             rel = path.relative_to(lib.root).as_posix()
             present.add(rel)
             try:
+                resolved = lib.checked(path)
                 st = path.stat()
-            except OSError:
+            except (OSError, ValueError):
                 continue
-            if not full and rel in known and known[rel] == (st.st_mtime, st.st_size):
+            source_version = ""
+            original_rel = resolved.relative_to(lib.root).as_posix()[:-3]
+            original = lib.resolve(original_rel)
+            if original is not None:
+                original_rel = original.relative_to(lib.root).as_posix()
+            if original_rel in descriptions:
+                try:
+                    source_version = file_digest(original) if original and original.is_file() else "missing"
+                except OSError:
+                    source_version = "unavailable"
+            if not full and rel in known and known[rel] == (st.st_mtime, st.st_size, source_version):
                 continue
             try:
-                text = path.read_text(encoding="utf-8")
+                text = describe.reading_text(lib, path, path.read_text(encoding="utf-8"))
             except (OSError, UnicodeDecodeError):
                 continue
             meta, body = parse_front_matter(text)
@@ -193,8 +217,8 @@ def update_index(lib, log: Optional[Callable[[str], None]] = None, full: bool = 
                     for i, (loc, chunk) in enumerate(chunk_markdown(for_index(body)))]
             conn.executemany("INSERT INTO chunks(text, title, locator, path, course, kind, chunk, doc_title) "
                              "VALUES (?,?,?,?,?,?,?,?)", rows)
-            conn.execute("INSERT OR REPLACE INTO docs(path, course, kind, title, mtime, size) VALUES (?,?,?,?,?,?)",
-                         (rel, course, kind, title, st.st_mtime, st.st_size))
+            conn.execute("INSERT OR REPLACE INTO docs(path, course, kind, title, mtime, size, source_version) VALUES (?,?,?,?,?,?,?)",
+                         (rel, course, kind, title, st.st_mtime, st.st_size, source_version))
             if rel in known:
                 updated += 1
             else:
@@ -239,10 +263,14 @@ def search(lib, query: str, course: str = "", kind: str = "", limit: int = 10, p
            markers: tuple = ("**", "**")) -> List[Dict[str, Any]]:
     if not lib.index_path.exists():
         return []
+    from . import describe
     fts, _ = _terms(query)
     if not fts:
         return []
-    conn = connect(lib.index_path)
+    if describe.load(lib):
+        update_index(lib)  # visual originals can change without changing the sidecar's mtime or size
+    conn = _connect(lib)
+    state = lib.load_state()
     filters = []
     params: List[Any] = []
     if course:
@@ -275,6 +303,9 @@ def search(lib, query: str, course: str = "", kind: str = "", limit: int = 10, p
         except sqlite3.OperationalError:
             continue
         for path, title, locator, crs, knd, snip, score, chunk in rows:
+            target = lib.resolve(path)
+            if target is None or not target.is_file():
+                continue
             key = (path, locator, chunk)
             if key in seen or per_path.get(path, 0) >= per_doc:
                 continue
@@ -283,7 +314,7 @@ def search(lib, query: str, course: str = "", kind: str = "", limit: int = 10, p
             results.append({"path": path, "title": title, "locator": locator, "course": crs, "kind": knd,
                             "snippet": re.sub(r"\s+", " ", snip).strip(), "score": round(-score, 3),
                             "match": "all words" if match == strategies[0] else "some words",
-                            "removed": is_removed(path)})
+                            "removed": is_removed(path), **material_status(lib, path, state)})
         if sum(1 for r in results if not r["removed"]) >= limit:
             break
     conn.close()
@@ -294,6 +325,81 @@ def search(lib, query: str, course: str = "", kind: str = "", limit: int = 10, p
 
 def is_removed(path: str) -> bool:
     return f"/{REMOVED_DIR}/" in f"/{path}"
+
+
+def material_status(lib, rel: str, state=None) -> Dict[str, Any]:
+    """Carry known source availability into every reading surface, including saved notes."""
+    result = {"status": "current", "stale": False, "last_successful_sync": "",
+              "last_successful_version": "", "message": ""}
+    if is_removed(rel):
+        return {**result, "status": "removed", "stale": True,
+                "message": "Historical copy: removed from Canvas; check current course material."}
+    state = lib.load_state() if state is None else state
+    sidecar_rel = rel if rel.endswith(".md") else rel + ".md"
+    if ".assets/" in rel:
+        sidecar_rel = rel.split(".assets/", 1)[0] + ".md"
+    for course in state.get("courses", {}).values():
+        folder = course.get("folder") or ""
+        for item in (course.get("items") or {}).values():
+            paths = {folder + "/" + p for p in (item.get("path"), item.get("text")) if p}
+            paths.update(p + ".md" for p in list(paths) if not p.endswith(".md"))
+            assets = {p[:-3] + ".assets/" if p.endswith(".md") else p + ".assets/" for p in paths}
+            if rel not in paths and not any(rel.startswith(p) for p in assets):
+                continue
+            result.update(last_successful_sync=item.get("last_successful_sync") or "",
+                          last_successful_version=item.get("successful_stamp") or item.get("stamp") or "")
+            status = item.get("status")
+            if status == "locked" or item.get("locked"):
+                result.update(status="restricted", stale=True,
+                              message="Historical copy: Canvas now marks this file locked or restricted. Do not treat it as current.")
+            elif status in ("failed", "too_large", "pending") or item.get("stale"):
+                result.update(status="stale", stale=True,
+                              message="This source is not up to date: its latest download failed or is pending. Check Canvas before relying on it.")
+            break
+    sidecar = lib.resolve(sidecar_rel)
+    if sidecar is not None and sidecar.is_file():
+        try:
+            meta, _ = parse_front_matter(sidecar.read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError):
+            meta = {}
+        marker = meta.get("sync_status")
+        if marker == "restricted":
+            result.update(status="restricted", stale=True,
+                          message="Historical copy: Canvas now marks this source locked or restricted. Do not treat it as current.")
+        elif marker == "stale" and result["status"] == "current":
+            result.update(status="stale", stale=True,
+                          message="This source is not up to date: its latest update did not complete. Check Canvas before relying on it.")
+    if "/Study Notes/" in "/" + rel:
+        from . import notes
+        from .outline import course_documents
+        store = notes.load(lib)
+        for source, entry in store.items():
+            if entry.get("file") != rel:
+                continue
+            if entry.get("kind") == "document":
+                sidecar = lib.resolve(source if source.endswith(".md") else source + ".md")
+                changed = sidecar is None or not sidecar.is_file() or entry.get("fp") != notes.fingerprint(sidecar, lib)
+            else:
+                target = lib.resolve(source)
+                found = notes._course_of(lib, target) if target else None
+                docs = course_documents(lib, found[0], include_light=True) if found else []
+                if entry.get("kind") == "module" and found:
+                    section = target.relative_to(found[0]).as_posix()
+                    docs = [d for d in docs if d.section == section]
+                changed = not found or notes._summary_status(store, source, docs) != "done"
+            if changed:
+                result.update(status="stale", stale=True,
+                              message="These study notes need review: a source changed, disappeared, is unavailable, or has newer notes. Check the current sources before relying on them.")
+            break
+    return result
+
+
+def freshness_warning(lib, rel: str) -> str:
+    status = material_status(lib, rel)
+    if not status["message"]:
+        return ""
+    when = status["last_successful_sync"]
+    return "> **Source warning:** " + status["message"] + (f" Last successful retrieval: {when}." if when else "") + "\n\n"
 
 
 def _simple(text: str) -> str:
@@ -320,7 +426,7 @@ def _like_prefix(folder: str) -> str:
 def list_documents(lib, course: str = "", kind: str = "") -> List[Dict[str, Any]]:
     if not lib.index_path.exists():
         return []
-    conn = connect(lib.index_path)
+    conn = _connect(lib)
     sql = "SELECT path, course, kind, title FROM docs WHERE 1=1"
     params: List[Any] = []
     if course:
@@ -337,7 +443,8 @@ def list_documents(lib, course: str = "", kind: str = "") -> List[Dict[str, Any]
         params += kinds
     rows = conn.execute(sql + " ORDER BY path", params).fetchall()
     conn.close()
-    return [{"path": r[0], "course": r[1], "kind": r[2], "title": r[3]} for r in rows]
+    return [{"path": r[0], "course": r[1], "kind": r[2], "title": r[3], **material_status(lib, r[0])}
+            for r in rows if lib.resolve(r[0]) is not None]
 
 
 BINARY_EXT = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tif", ".tiff", ".heic", ".heif", ".mp4", ".mov",
@@ -369,6 +476,8 @@ def read_document(lib, rel_path: str, locator: str = "", start: int = 0, max_cha
         raise FileNotFoundError(f"{path.name} is a picture, recording or other file without a text version here. "
                                 "Use view_page to look at pictures, slides and PDF pages.")
     text = path.read_text(encoding="utf-8", errors="replace")
+    from .describe import reading_text
+    text = reading_text(lib, path, text)
     if lean:
         from .compact import compact
 
@@ -403,7 +512,7 @@ def read_document(lib, rel_path: str, locator: str = "", start: int = 0, max_cha
     chunk = text[start:start + max_chars]
     if start + max_chars < len(text):
         chunk += f"\n\n[… {len(text) - start - max_chars} more characters. Read on with start={start + max_chars}.]"
-    return chunk
+    return freshness_warning(lib, path.relative_to(root).as_posix()) + chunk
 
 
 def _looks_like_text(path: Path) -> bool:

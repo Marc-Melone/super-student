@@ -63,6 +63,8 @@ def cmd_setup(args) -> int:
 
     cfg = load_config()
     _print(f"Super Student {__version__} setup\n")
+    _print("Personal use only while Canvas integration approval is unresolved. Use only your own account.\n"
+           "Onboarding other users requires an institution-approved OAuth developer key and integration approval.\n")
     url = args.url or _ask("Your Canvas web address (e.g. yourschool.instructure.com)", cfg.get("canvas_url", ""))
     try:
         cfg["canvas_url"] = normalize_canvas_url(url)
@@ -208,7 +210,7 @@ def cmd_sync(args) -> int:
         lib.log("sync failed: Canvas rejected the token")
         try:
             lib.ensure()
-            (lib.meta / "auth_error").write_text(now_iso())
+            lib.checked(lib.meta / "auth_error").write_text(now_iso())
         except OSError:
             pass
         _print("Canvas rejected the saved token (expired or revoked). Make a new one and run: superstudent setup")
@@ -281,6 +283,8 @@ def cmd_search(args) -> int:
     for i, h in enumerate(hits, 1):
         gone = "  (removed from Canvas)" if h.get("removed") else ""
         _print(f"{i}. {h['title']}  [{h['locator'] or 'start'}]  ({h['kind']}){gone}\n   {h['path']}\n   {h['snippet']}\n")
+        if h.get("message"):
+            _print("   Source warning: " + h["message"] + "\n")
     return 0
 
 

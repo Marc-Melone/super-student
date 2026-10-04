@@ -17,9 +17,13 @@ class SyncLocked(Exception):
     pass
 
 
+class LibraryPathError(ValueError):
+    """A final input or output resolves outside the course library."""
+
+
 class Library:
     def __init__(self, root: Path):
-        self.root = Path(root)
+        self.root = Path(root).resolve()
         self.meta = self.root / ".superstudent"
         self.state_path = self.meta / "state.json"
         self.index_path = self.meta / "search.db"
@@ -35,21 +39,35 @@ class Library:
                 os.chmod(self.root, 0o700)  # grades and feedback live here: keep it private to this account
             except OSError:
                 pass
-        self.meta.mkdir(parents=True, exist_ok=True)
+        self.checked(self.meta).mkdir(parents=True, exist_ok=True)
+
+    def checked(self, path: Path) -> Path:
+        """Check the final path, including existing symlinked parents, before using it.
+
+        Call again after deriving an adjacent original, text version or generated output.
+        Nonexistent outputs are allowed only when their existing parents remain in the library.
+        """
+        try:
+            candidate = Path(path).resolve()
+            if candidate == self.root or self.root in candidate.parents:
+                return candidate
+        except (OSError, RuntimeError):
+            pass
+        raise LibraryPathError("That path is outside the library.")
 
     # -- state
     def load_state(self) -> Dict[str, Any]:
-        state = read_json(self.state_path, None) or {}
+        state = read_json(self.checked(self.state_path), None) or {}
         state.setdefault("version", STATE_VERSION)
         state.setdefault("courses", {})
         return state
 
     def save_state(self, state: Dict[str, Any]) -> None:
         self.ensure()
-        atomic_write_json(self.state_path, state)
+        atomic_write_json(self.checked(self.state_path), state)
 
     def snapshot_path(self, course_id: str) -> Path:
-        return self.meta / "courses" / f"{course_id}.json"
+        return self.checked(self.meta / "courses" / f"{course_id}.json")
 
     def load_snapshot(self, course_id: str) -> Dict[str, Any]:
         return read_json(self.snapshot_path(course_id), {}) or {}
@@ -58,15 +76,15 @@ class Library:
         atomic_write_json(self.snapshot_path(course_id), snap)
 
     def last_sync(self) -> Dict[str, Any]:
-        return read_json(self.last_sync_path, {}) or {}
+        return read_json(self.checked(self.last_sync_path), {}) or {}
 
     def log(self, line: str) -> None:
         self.ensure()
-        with open(self.log_path, "a", encoding="utf-8") as fh:
+        with open(self.checked(self.log_path), "a", encoding="utf-8") as fh:
             fh.write(f"{now_iso()} {line}\n")
         try:
             if self.log_path.stat().st_size > 5 * 1024 * 1024:
-                old = self.log_path.with_suffix(".log.1")
+                old = self.checked(self.log_path.with_suffix(".log.1"))
                 os.replace(self.log_path, old)
         except OSError:
             pass
@@ -75,7 +93,7 @@ class Library:
     @contextlib.contextmanager
     def lock(self, wait_seconds: float = 0) -> Iterator[None]:
         self.ensure()
-        fh = open(self.lock_path, "a+")
+        fh = open(self.checked(self.lock_path), "a+")
         deadline = time.time() + wait_seconds
         try:
             while True:
@@ -99,7 +117,7 @@ class Library:
     def sync_running(self) -> bool:
         if not self.lock_path.exists():
             return False
-        with open(self.lock_path, "a+") as fh:
+        with open(self.checked(self.lock_path), "a+") as fh:
             if _try_lock(fh):
                 _unlock(fh)
                 return False
@@ -109,11 +127,10 @@ class Library:
         """Resolve a path inside the library; refuse anything outside it."""
         if not relative:
             return None
-        candidate = (self.root / relative.lstrip("/")).resolve()
-        root = self.root.resolve()
-        if candidate == root or root in candidate.parents:
-            return candidate
-        return None
+        try:
+            return self.checked(self.root / relative.lstrip("/"))
+        except LibraryPathError:
+            return None
 
 
 def _try_lock(fh) -> bool:

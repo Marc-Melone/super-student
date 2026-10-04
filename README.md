@@ -1,5 +1,15 @@
 # Super Student
 
+**Current scope: personal use only, while Canvas integration approval is unresolved.** Use your own account
+and follow your institution's rules. Do not onboard other students through the personal-token setup.
+An institution-approved OAuth developer key and approval for the integration are required before wider use;
+neither has been established for this project. See [Canvas's OAuth requirements](https://developerdocs.instructure.com/services/canvas/oauth2/file.oauth)
+and [Canvas's API policy](https://www.instructure.com/policies/canvas-api-policy), including its restrictions on
+unapproved MCP integrations. This scope statement does not establish approval for personal MCP use.
+
+The fixes in this branch are source changes. The existing **1.6.0 Mac download does not contain them**;
+build the app from this source before testing the patched version. No replacement release has been published.
+
 Turns your Canvas courses into a study library your AI can actually use, with **Claude** or **ChatGPT**
 (Work, Chat and Codex). It pulls everything you can see in Canvas onto your Mac, keeps it up to date on
 its own, converts it into searchable text with exact page, slide and timestamp markers, keeps the
@@ -94,6 +104,12 @@ When your instructor deletes, replaces or hides something, the next sync moves y
 `_Removed from Canvas/` folder and marks it with the date, so it can't be mistaken for current material.
 Search still finds it, after current material and labeled; exam intel and the study pass leave it out. If it
 comes back on Canvas, it moves back.
+
+If a newer file cannot be downloaded, the previous copy is kept with a source warning in the text, search
+results and connector readings. Newly locked files receive a restricted-content warning even when Canvas
+has not changed their timestamp or size. These copies are left out of exam intel and the study pass.
+Successful retrieval clears the warning. Picture descriptions and study-note summaries are checked against
+the current source content; older records without source hashes need to be reviewed and saved again.
 
 ## Install the Mac app (no Terminal needed)
 
@@ -349,3 +365,6 @@ access token in Canvas (Account → Settings → Approved Integrations).
   packs, settings, an expired token, sign out and uninstall, and checks its security rules (session token,
   Host check, JSON-only requests, no opening files outside the library). `python tests/gui_demo.py` runs the
   app against the fake Canvas so you can click through it (demo token: `test-token-123-padding-to-look-real`).
+- `python tests/test_high_priority.py` checks exact-origin credentials, external symlinks across library tools,
+  safe download staging, stale/restricted sources, interrupted syncs, content hashes and derived-note freshness.
+  It uses temporary libraries, dummy credentials and local test servers; it never contacts a real Canvas account.
