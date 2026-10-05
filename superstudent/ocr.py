@@ -75,10 +75,11 @@ def _apple_lines(cgimage, orientation: int = 1) -> List[Line]:
     request = Vision.VNRecognizeTextRequest.alloc().init()
     request.setRecognitionLevel_(getattr(Vision, "VNRequestTextRecognitionLevelAccurate", 0))
     request.setUsesLanguageCorrection_(True)
+    # No auxiliary options. A Python dict can raise on Vision's lookup of absent keys through PyObjC.
     if orientation and orientation != 1:     # phone photos are stored sideways with an orientation tag
-        handler = Vision.VNImageRequestHandler.alloc().initWithCGImage_orientation_options_(cgimage, orientation, {})
+        handler = Vision.VNImageRequestHandler.alloc().initWithCGImage_orientation_options_(cgimage, orientation, None)
     else:
-        handler = Vision.VNImageRequestHandler.alloc().initWithCGImage_options_(cgimage, {})
+        handler = Vision.VNImageRequestHandler.alloc().initWithCGImage_options_(cgimage, None)
     result = handler.performRequests_error_([request], None)
     ok = result[0] if isinstance(result, tuple) else bool(result)
     if not ok:

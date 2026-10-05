@@ -151,7 +151,17 @@ def fake_vision(image_size=(1000, 500)):
             return cls()
 
         def initWithCGImage_options_(self, image, options):
+            if isinstance(options, dict):
+                # Vision probes optional keys; the Python mapping bridge can throw instead of returning nil.
+                raise ValueError("NSInvalidArgumentException - key does not exist")
             calls["image"] = image
+            calls["options"] = options
+            calls["orientation"] = 1
+            return self
+
+        def initWithCGImage_orientation_options_(self, image, orientation, options):
+            self.initWithCGImage_options_(image, options)
+            calls["orientation"] = orientation
             return self
 
         def performRequests_error_(self, requests, error):
@@ -166,6 +176,7 @@ def fake_vision(image_size=(1000, 500)):
     quartz.CGImageSourceCreateWithURL = lambda url, opts: ("source", url)
     quartz.CGImageSourceCreateWithData = lambda data, opts: ("source", data)
     quartz.CGImageSourceCreateImageAtIndex = lambda src, i, opts: ("cgimage", src)
+    quartz.CGImageSourceCopyPropertiesAtIndex = lambda src, i, opts: {"Orientation": calls.get("source_orientation", 1)}
     foundation = types.ModuleType("Foundation")
     foundation.NSURL = types.SimpleNamespace(fileURLWithPath_=lambda p: f"file://{p}")
     foundation.NSData = types.SimpleNamespace(dataWithBytes_length_=lambda b, n: ("nsdata", n))
@@ -202,8 +213,15 @@ def main() -> None:
         check(abs(got[0].y - 0.07) < 0.01, "bottom-left boxes converted to top-left positions", got[0])
         check(calls.get("level") == 0 and calls.get("correction") is True and calls.get("performed") == 1,
               "accurate recognition requested once", calls)
+        check(calls.get("options") is None and calls.get("orientation") == 1,
+              "upright image recognition avoids the Python mapping bridge")
         got = ocr.read_lines(data=b"\x89PNG fake")
         check(len(got) == 3 and calls["image"][1][0] == "source", "reads image bytes too (pages rendered from PDFs)")
+        check(calls.get("options") is None, "image bytes recognition avoids the Python mapping bridge")
+        calls["source_orientation"] = 6
+        got = ocr.read_lines(path=files["png"])
+        check(len(got) == 3 and calls.get("orientation") == 6 and calls.get("options") is None,
+              "sideways photos preserve orientation without the Python mapping bridge")
     finally:
         if disabled is not None:
             os.environ["SUPERSTUDENT_NO_APPLE_OCR"] = disabled

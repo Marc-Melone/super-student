@@ -7,8 +7,10 @@ neither has been established for this project. See [Canvas's OAuth requirements]
 and [Canvas's API policy](https://www.instructure.com/policies/canvas-api-policy), including its restrictions on
 unapproved MCP integrations. This scope statement does not establish approval for personal MCP use.
 
-The fixes in this branch are source changes. The existing **1.6.0 Mac download does not contain them**;
-build the app from this source before testing the patched version. No replacement release has been published.
+**Version 1.6.1 includes the security and study-accuracy fixes.** Replace the older app with this version
+and reopen it to update its private runtime. Then restart ChatGPT and Claude so their connectors use the
+updated code. Your course library and settings are kept. Older visual descriptions and study notes may
+need to be recreated because source changes are now checked more strictly.
 
 Turns your Canvas courses into a study library your AI can actually use, with **Claude** or **ChatGPT**
 (Work, Chat and Codex). It pulls everything you can see in Canvas onto your Mac, keeps it up to date on
@@ -20,8 +22,8 @@ the assistant you use. One library and one sync serve both.
 
 **New here? The [Super Student website](https://marc-melone.github.io/super-student/) explains it in plain language.**
 
-**Get the Mac app:** [download SuperStudent-1.6.0-mac.zip](https://github.com/Marc-Melone/super-student/raw/main/releases/SuperStudent-1.6.0-mac.zip)
-(also in the [`releases`](releases) folder), then follow [Install the Mac app](#install-the-mac-app-no-terminal-needed). You need a Mac with macOS 11 or newer, the ChatGPT
+**Get the Mac app:** [download SuperStudent-1.6.1-mac.zip](https://github.com/Marc-Melone/super-student/raw/main/releases/SuperStudent-1.6.1-mac.zip)
+(also in the [`releases`](releases) folder), then follow [Install the Mac app](#install-the-mac-app-no-terminal-needed). You need a Mac with macOS 13 or newer, the ChatGPT
 or Claude desktop app, and a Canvas account that lets students make access tokens. It's a personal tool: one
 student, their own courses, on their own Mac.
 
@@ -136,8 +138,9 @@ window from the older version is closed first). Afterwards the app reminds you t
 Claude so they use the new version. The command line tool is at `~/.superstudent/bin/superstudent` if you
 want it.
 
-Everything the app installs is a ready-made download at a version tested for your kind of Mac (Apple Silicon
-or Intel, macOS 11 or newer), so nothing has to be compiled on your Mac. If your network needs a proxy set in
+The app uses ready-made downloads at pinned versions for Apple Silicon and Intel Macs on macOS 13 or newer,
+so nothing has to be compiled on your Mac. Installation and upgrades were checked on Apple Silicon;
+Intel execution and older macOS versions were not checked in this release. If your network needs a proxy set in
 System Settings, setup uses it. If setup can't finish, it says why (no internet, not enough disk space, or the
 app needs to be moved into Applications) and keeps a log under `~/.superstudent/logs/`.
 
@@ -146,7 +149,7 @@ app needs to be moved into Applications) and keeps a log under `~/.superstudent/
 `python mac/build_app.py` creates `dist/Super Student.app` and `dist/SuperStudent-<version>-mac.zip` (it needs
 the internet). The app contains a launcher script, Super Student as a wheel, the exact version of every
 dependency for each kind of Mac (`constraints-arm64.txt`, `constraints-x86_64.txt`, all ready-made downloads for
-macOS 11+), and pinned checksums for the installer (uv) it fetches from PyPI on first run. Nothing is written
+macOS 13+), and pinned checksums for the installer (uv) it fetches from PyPI on first run. Nothing is written
 inside the app, so it also works from a read-only location.
 
 ## Install with Terminal (macOS or Linux)

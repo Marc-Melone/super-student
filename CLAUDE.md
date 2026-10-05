@@ -4,7 +4,7 @@ Super Student mirrors a student's Canvas courses into `~/SuperStudent` (the "lib
 study them like someone who studied every slide: everything is converted to text with citable locators
 (`## [Page 12]`, `## [Slide 7] Title`, `## [00:32:10]`), originals are kept for viewing as images, and a connector
 (MCP server) plus skills let the AI search, read, view pages and run a "study pass". It ships as a Mac app
-(non-technical students), a Terminal installer, and a CLI. Owner: Marc. Current version: 1.6.0.
+(non-technical students), a Terminal installer, and a CLI. Owner: Marc. Current version: 1.6.1.
 
 ## Working with Marc
 
@@ -14,9 +14,22 @@ study them like someone who studied every slide: everything is converted to text
 - Suggested effort: `high` for normal work on this codebase, `xhigh` for long unattended builds, `max` for
   independent reviews (especially anything touching the Canvas token).
 
-## Status (2 Oct 2026)
+## Status (5 Oct 2026)
 
-- 1.6.0 is finished and published: four independent reviews (conversion pipeline, Canvas API, AI layer, Mac
+- 1.6.1 packages the credential-origin, library-boundary, stale-source and source-fingerprint fixes merged
+  in PR #1. Visual descriptions and study notes without the new hashes are treated as outdated.
+- Personal use only while institutional OAuth and Canvas integration approval remain unresolved. Do not
+  onboard other users through personal access tokens. The website stays "Coming soon".
+- The Mac app now declares macOS 13+ to match the pinned installer's supported platform policy. Both chip
+  architectures have dependency constraints; Intel execution and older macOS have not been tested here.
+- The native Vision adapter uses optional `None` options to avoid a reproduced PyObjC dictionary bridge
+  error. Actual Vision recognition remains unverified in this environment (CVPixelBuffer creation fails).
+- The packaged 1.6.1 ARM runtime passed 432 automated checks (one optional LibreOffice check skipped) and
+  22 package/launcher checks. Fresh setup, an upgrade over a running 1.6.0 server, data preservation,
+  executable ZIP permissions and read-only bundle startup passed. Tests used temporary profiles and dummy
+  tokens. This sandbox exposes no AppKit/CoreGraphics displays; the native window could not be tested.
+
+- Historical 1.6.0 release: four independent reviews (conversion pipeline, Canvas API, AI layer, Mac
   app/installer), all findings fixed. 395 automated checks pass on Python 3.12. The Mac app zip is committed in
   `releases/` (this session type couldn't create GitHub Releases).
 - Repo: github.com/Marc-Melone/super-student, currently **public**. Marc is considering making it private and
@@ -29,8 +42,9 @@ study them like someone who studied every slide: everything is converted to text
   (link: `https://github.com/Marc-Melone/super-student/raw/main/releases/SuperStudent-<version>-mac.zip`) and update
   the version number on every release. The README links to `https://marc-melone.github.io/super-student/`.
 - Not yet verified:
-  1. Run the Mac app on a real Mac. It was only run end to end under bash 3.2 on Linux. Check:
-     - first-time setup, opening it straight from Downloads, an update over an open 1.5/1.6 window
+  1. Test the native Mac window and Finder/Gatekeeper flow outside the sandbox. The local server, fresh
+     runtime install and upgrade passed on Apple Silicon under Bash 3.2. Still check:
+     - opening it straight from Downloads and an update over an open native 1.5/1.6 window
      - the token saved to the Keychain through `security -i`
      - the quarantine flag on downloaded course files
      - HEIC pictures through `sips`
@@ -100,8 +114,8 @@ Estimates are Claude working time.
     - `scheduler.py` (launchd), `config.py` (Keychain), `assistants.py` (Claude/Codex config), `uninstall.py`
 - `mac/`
   - `launcher.sh` is the app executable and must stay bash-3.2 compatible.
-  - `build_app.py` builds a wheel plus per-chip `constraints-*.txt`. These are wheels-only for macOS 11 and later,
-    pinned uv. Note that uv splits `--constraint` values at spaces.
+  - `build_app.py` builds a wheel plus per-chip `constraints-*.txt`. These are wheels-only for macOS 13 and later,
+    pinned uv. App minimum is macOS 13. Note that uv splits `--constraint` values at spaces.
   - `progress.js`, `make_icon.py`
 - `tests/`: `fake_canvas.py` (fake Canvas plus a separate "storage" host), `make_fixtures.py`, and the suites below.
 
@@ -123,10 +137,11 @@ pip install -e '.[media,gui]'          # brew install tesseract libreoffice   (o
 export SS_TEST_DIR="$PWD/.testwork"
 python tests/test_e2e.py            # 87 checks: full sync against the fake Canvas, search, connector
 python tests/test_review_fixes.py   # 124 checks: everything fixed in 1.6
-python tests/test_visuals.py        # 40
+python tests/test_visuals.py        # 43
 python tests/test_study.py          # 59
 python tests/test_gui.py            # 67 (app server; SUPERSTUDENT_APP_DRYRUN)
 python tests/test_openai.py         # 18 (needs the Codex CLI on PATH for the live part)
+python tests/test_high_priority.py  # 35 security and source-freshness regressions
 python tests/gui_demo.py            # click through the app against the fake Canvas (token: test-token-123-padding-to-look-real)
 python mac/build_app.py             # dist/Super Student.app and dist/SuperStudent-<version>-mac.zip
 ```

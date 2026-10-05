@@ -129,7 +129,7 @@ get_uv() {
     Darwin-x86_64) tag="macos-x86_64" ;;
     Linux-x86_64) tag="linux-x86_64" ;;
     Linux-aarch64) tag="linux-aarch64" ;;
-    *) fail "this computer ($os $arch) isn't supported." "Super Student runs on Macs with macOS 11 or newer." ;;
+    *) fail "this computer ($os $arch) isn't supported." "Super Student runs on Macs with macOS 13 or newer." ;;
   esac
   UV="$SS_HOME/bin/uv"
   if [ -x "$UV" ] && [ "$("$UV" --version 2>/dev/null | awk '{print $2}')" = "$(cat "$RES/uv-version")" ]; then return; fi
