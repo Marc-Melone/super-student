@@ -557,7 +557,7 @@ class LibraryTests(unittest.TestCase):
         original.write_text('Other source version with important lecture facts.')  # same length, unchanged sidecar
         progress = notes.progress(self.lib)['courses'][0]
         self.assertEqual(progress['changed'], 1)
-        self.assertEqual(progress['course_notes'], 'changed since studied')
+        self.assertEqual(progress['course_notes'], 'changed since notes saved')
         self.assertIn('Source warning', self.call('course_file', {'course': 'C1', 'file': 'notes'}))
         record = notes.load(self.lib)[self.folder]
         self.assertIn('Source warning', index.read_document(self.lib, record['file']))
@@ -577,7 +577,7 @@ class LibraryTests(unittest.TestCase):
                     state = self.lib.load_state()
                     state['courses']['1']['items']['file:2'] = {'path': 'Files/extra.txt', 'text': 'Files/extra.txt.md', 'status': 'locked'}
                     self.lib.save_state(state)
-                self.assertEqual(notes.progress(self.lib)['courses'][0]['course_notes'], 'changed since studied')
+                self.assertEqual(notes.progress(self.lib)['courses'][0]['course_notes'], 'changed since notes saved')
 
     def test_module_summary_depends_on_current_source_set(self):
         module = self.course / 'Modules' / '01 - Week'
@@ -587,12 +587,12 @@ class LibraryTests(unittest.TestCase):
         self.assertTrue(notes.save(self.lib, self.rel(module), 'Module summary of the reading. ' * 16)['ok'])
         self.assertEqual(notes.progress(self.lib)['courses'][0]['modules'][0]['status'], 'done')
         source.write_text(source.read_text() + '\nChanged facts for the module.')
-        self.assertEqual(notes.progress(self.lib)['courses'][0]['modules'][0]['status'], 'changed since studied')
+        self.assertEqual(notes.progress(self.lib)['courses'][0]['modules'][0]['status'], 'changed since notes saved')
 
     def test_legacy_summary_requires_review(self):
         self.document()
         atomic_write_json(self.lib.meta / 'notes.json', {self.folder: {'kind': 'course', 'docs': 1, 'date': '2099-01-01'}})
-        self.assertEqual(notes.progress(self.lib)['courses'][0]['course_notes'], 'changed since studied')
+        self.assertEqual(notes.progress(self.lib)['courses'][0]['course_notes'], 'changed since notes saved')
 
 
 if __name__ == '__main__':

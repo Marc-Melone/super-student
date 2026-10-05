@@ -435,9 +435,10 @@ def cmd_study(args) -> int:
 
     lib = Library(library_path(load_config()))
     info = progress(lib, course=args.course or "", limit=args.n)
-    _print(f"Studied {info['done']} of {info['docs']} documents.")
+    _print(f"Current referenced notes: {info['done']} of {info['docs']} documents.")
     for c in info["courses"]:
-        _print(f"\n{c['label']}: {c['done']} of {c['docs']} studied; course notes: {c['course_notes']}")
+        _print(f"\n{c['label']}: {c['done']} of {c['docs']} with current referenced notes; course notes: {c['course_notes']}")
+        _print("Page/slide references do not verify reading, understanding or mastery.")
         for t in c["todo"]:
             _print(f"- {t['path']}  |  {t['status']}")
     return 0

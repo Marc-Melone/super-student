@@ -7,7 +7,7 @@ neither has been established for this project. See [Canvas's OAuth requirements]
 and [Canvas's API policy](https://www.instructure.com/policies/canvas-api-policy), including its restrictions on
 unapproved MCP integrations. This scope statement does not establish approval for personal MCP use.
 
-**Version 1.6.1 includes the security and study-accuracy fixes.** Replace the older app with this version
+**Version 1.6.1 includes the security and source-freshness fixes.** Replace the older app with this version
 and reopen it to update its private runtime. Then restart ChatGPT and Claude so their connectors use the
 updated code. Your course library and settings are kept. Older visual descriptions and study notes may
 need to be recreated because source changes are now checked more strictly.
@@ -42,6 +42,29 @@ student, their own courses, on their own Mac.
    a search happened to find.
 5. **Stay current.** It updates in the background every few hours. Anything your instructor deletes or replaces
    moves to a dated `_Removed from Canvas` folder instead of being mixed in with current material.
+
+### Exam preparation in 1.7.0 (development preview)
+
+Choose **Prepare for exam** on a course card. Create a workspace with selected modules, optional date,
+format, and scope your instructor specified. The source inventory is visible; module selections include
+other course references such as syllabus and announcements. The selection remains unconfirmed exam scope.
+
+Copy the preparation request into your connected ChatGPT or Claude. The assistant reads originals, checks
+diagrams and equations, uses instructor notation and feedback, and saves practice through the connector.
+Refresh the workspace to practice inside Super Student: multiple-choice questions are scored against the
+saved AI answer key; written answers show a worked answer for your own assessment. Mistakes and due reviews
+rise to the top, with saved attempts and a simple spaced review schedule. Changed, removed or restricted
+sources disable affected practice until new questions are generated. Your library stays local.
+
+Every question requires exact supporting quotations at unique source locators. This proves quotations exist
+in current local source text, **not** that an AI answer is logically correct. Search can combine up to four
+supplied alternate phrasings; it does not use embeddings or automatically search by meaning. The app still
+uses your external assistant to create questions and explain new topics.
+
+First-attempt quiz performance, self-assessment, and saved source-note coverage are separate. None is proof
+of mastery or a prediction of an exam grade. No comparative answer-quality or learning study against
+NotebookLM has been completed. Run the authored retrieval/evidence benchmark described in
+[benchmarks/README.md](benchmarks/README.md) to reproduce the limited offline checks.
 
 | Setup | Search across everything |
 |---|---|
@@ -204,11 +227,12 @@ Super Student gives the AI two more things:
 
 - **`OUTLINE.md`** in each course: every module, document, slide and page in the instructor's order, with
   pictures marked. The AI scopes a review from it and checks nothing in scope was left out.
-- **The study pass.** Paste the request from the app ("Study pass" panel, **Copy the request**) into ChatGPT
+- **The study pass.** Paste the request from the app ("Source notes" panel, **Copy the request**) into ChatGPT
   or Claude. The AI works through the course in order: reads each document all the way through, looks at
   every slide and page with pictures, describes the pictures, and saves notes that cite every slide or page
   (`study_progress`, `save_study_notes`). Super Student checks the notes against the document and lists any
-  slides or pages they skipped, flags documents that changed since, and tracks module and course notes.
+  missing slide or page references, flags documents that changed since, and tracks module and course notes.
+  Reference coverage does not verify reading, understanding, or student learning.
   Notes go in `<course>/Study Notes/`, are searchable, and ride along in exam packs.
 
 For broad questions the AI then reads the notes for everything in scope and opens the sources for detail,

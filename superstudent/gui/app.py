@@ -525,10 +525,11 @@ class App:
             webbrowser.open(url)
         return {"ok": True}
 
-    def search(self, q: str, course: str = "", kind: str = "") -> Dict[str, Any]:
+    def search(self, q: str, course: str = "", kind: str = "", alternate_queries: Optional[List[str]] = None) -> Dict[str, Any]:
         from ..index import search
 
-        hits = search(self.lib(), q, course=course, kind=kind, limit=40, markers=(MARK_ON, MARK_OFF))
+        hits = search(self.lib(), q, course=course, kind=kind, limit=40, markers=(MARK_ON, MARK_OFF),
+                      alternate_queries=alternate_queries)
         if not kind:   # the summary files repeat what's in the materials; the AI uses them, people don't need them here
             hits = [h for h in hits if h.get("kind") not in SUMMARY_KINDS]
         for h in hits:
@@ -640,6 +641,8 @@ class App:
         return f"http://127.0.0.1:{self.port}/?t={self.token}"
 
     def routes(self) -> Dict[str, Callable[[Dict[str, Any], Dict[str, List[str]]], Dict[str, Any]]]:
+        from .. import exams
+
         return {
             "GET /api/state": lambda b, q: self.state(),
             "POST /api/canvas/find": lambda b, q: self.find_school(b.get("query", "")),
@@ -653,11 +656,20 @@ class App:
             "POST /api/sync/start": lambda b, q: self.start_sync(b.get("course", "")),
             "GET /api/sync/progress": lambda b, q: self.sync_progress(),
             "GET /api/search": lambda b, q: self.search((q.get("q") or [""])[0], (q.get("course") or [""])[0],
-                                                       (q.get("kind") or [""])[0]),
+                                                       (q.get("kind") or [""])[0], q.get("alternate") or []),
             "POST /api/open": lambda b, q: self.open_item(b.get("path", ""), bool(b.get("reveal"))),
             "POST /api/open-place": lambda b, q: self.open_place(b.get("which", ""), b.get("folder", "")),
             "POST /api/open-url": lambda b, q: self.open_url(b.get("url", "")),
             "POST /api/pack": lambda b, q: self.make_pack(b.get("folder", ""), b.get("modules") or []),
+            "GET /api/exams": lambda b, q: exams.list_plans(self.lib(), (q.get("course") or [""])[0]),
+            "GET /api/exam": lambda b, q: exams.get_plan(self.lib(), (q.get("id") or [""])[0], include_answers=False),
+            "POST /api/exam/create": lambda b, q: exams.create_plan(
+                self.lib(), b.get("course", ""), b.get("title", ""), modules=b.get("modules") or [],
+                exam_date=b.get("exam_date", ""), format=b.get("format", ""), scope_note=b.get("scope_note", "")),
+            "POST /api/exam/reveal": lambda b, q: exams.reveal_question(self.lib(), b.get("plan_id", ""), b.get("question_id", "")),
+            "POST /api/exam/attempt": lambda b, q: exams.record_attempt(
+                self.lib(), b.get("plan_id", ""), b.get("question_id", ""), answer=b.get("answer", ""),
+                choice_index=b.get("choice_index", -1), self_rating=b.get("self_rating", "")),
             "POST /api/choose-folder": lambda b, q: self.choose_folder(),
             "POST /api/install-transcription": lambda b, q: self.install_transcription(),
             "POST /api/ping": lambda b, q: self._ping(),

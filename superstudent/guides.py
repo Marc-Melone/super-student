@@ -29,7 +29,8 @@ Use whichever is available, in this order:
    (overview, exam_intel, calendar, grades, links, syllabus), `view_page` (see a page, slide or lecture
    screenshot as an image), `list_courses`, `list_files`, `sync_status`, `start_sync`,
    `list_undescribed_visuals` and `save_visual_description` (see "Describing pictures"), `study_progress` and
-   `save_study_notes` (see "The study pass").
+   `save_study_notes` (see "The study pass"); `exam_plans`, `create_exam_plan`, `check_source_evidence`,
+   and `save_exam_questions` (see "Exam prep").
 2. **Shell** (Claude Code, Codex, a ChatGPT local project, a linked computer): `superstudent search "query" --course "FIN 6100"`,
    `superstudent read "<path>" --at "Slide 7"`, `superstudent render "<path>" --page 7` (prints an image
    path to open), `superstudent status`, `superstudent sync`, `superstudent visuals` and
@@ -68,7 +69,7 @@ if they came from the course.
 
 1. **Orient.** Identify the course. For anything about structure, dates or grading, start from
    `COURSE_OVERVIEW.md`.
-2. **Search broadly.** Run several searches: the professor's wording, synonyms, formula names,
+2. **Search broadly.** Supply `alternate_queries` to combine rankings for the professor's wording, synonyms, formula names,
    abbreviations. Filter by course or kind (slides, lecture, reading, assignment, announcement) when useful.
 3. **Read the source, not the snippet.** Open the best hits at their locator and read around them.
 4. **Look when it's visual.** If a section is flagged visual, or the text looks garbled (math especially),
@@ -78,6 +79,10 @@ if they came from the course.
    course for exams.
 6. **Cite.** Tie claims from the materials to their source, e.g. (Lecture 5 slides, Slide 12),
    (Week 3 lecture, 00:32:10), (Syllabus). Include the path when it helps the user open it.
+   Use `check_source_evidence` with exact path, unique locator and a short exact quotation for important
+   course claims. It checks that the quote exists in current source text; you must still check that the
+   source supports the claim, including diagrams and equations. Do not turn a citation check into a
+   claim of independent answer verification.
 7. **Be honest about gaps.** If the materials don't cover it, say so. Check `LINKS.md` before concluding
    something doesn't exist, since publisher homework, New Quizzes and outside video platforms aren't mirrored.
    Keep course material and your own general knowledge clearly separate.
@@ -101,6 +106,26 @@ search hits alone.
 
 ## Exam prep
 
+- **Saved exam workspace:** the app's "Prepare for exam" button records a course, selected modules,
+  optional date, format and the student's stated scope. Use `exam_plans` to find it, or `create_exam_plan`
+  for one unambiguous course. Empty modules means the whole course. Other course references such as
+  syllabus and announcements remain in the inventory. A student's selection is unconfirmed exam scope:
+  check instructor announcements and flag disagreement or missing scope. Do not invent exam weights.
+- **Build practice from the originals:** read the workspace inventory and sources fully. Use instructor
+  terms, notation, sign conventions, examples and rubric feedback. View images for diagrams/equations.
+  Cover recall, worked applications and unfamiliar transfer problems. Label these as AI-generated
+  practice. Never claim an unseen official exam will match them.
+- **Save usable questions:** call `save_exam_questions` with plan_id and questions. Each has topic,
+  prompt, type (mcq or short_answer), answer, explanation, difficulty (recall/application/transfer),
+  citations (path, exact unique locator, short exact supporting quote). MCQs also have choices and
+  zero-based correct_index. Explain why alternatives fail and how to avoid the common mistake.
+  Quotes must lie in selected current original sources. The app rejects fabricated quotations and
+  changed sources; it cannot verify that your answer follows from the quotes. Check the reasoning.
+- **Practice in the app:** quiz attempts are scored against the saved AI answer key. Short answers
+  are self-assessed after comparing with the worked answer. First-attempt quiz accuracy excludes
+  answer reveals. Review priorities use mistakes, attempts and a simple spaced schedule; these are
+  not proof of mastery or a forecast of the student's grade. Read `exam_plans` to target mistakes
+  and fill uncovered source topics in the next batch. Regenerate questions flagged for changed sources.
 - **Scope:** find the exam date and what it covers (`EXAM_INTEL.md`, announcements, syllabus,
   `CALENDAR.md`). If coverage is given as weeks, modules or chapters, restrict everything to those.
 - **Prioritise:** topics the instructor flagged, spent lecture time on, repeated across slides and
@@ -143,7 +168,8 @@ their courses (or before a big review, if much is unstudied):
 3. Save notes with `save_study_notes`, citing a slide or page for every point. Include what each figure and
    diagram shows (every label), definitions as the course states them, formulas and steps, examples, what
    the instructor emphasized (speaker notes, repeated points, exam hints), and likely exam questions.
-   Super Student lists any slides or pages the notes skipped: cover them and save again.
+   Super Student lists missing slide/page references: check those sources and save again. Mentioning
+   every page number does not verify that you read or understood it, and says nothing about student mastery.
 4. When all of a module's documents are done, save module notes for the module folder (how the pieces fit,
    with the lecture transcripts). When every module is done, save course notes for the course folder.
 5. Work in batches and tell the student what's done and what's left. Notes are yours, from the materials:

@@ -1,0 +1,98 @@
+{
+  "description": "Authored synthetic classroom sources and curated alternate query wording. No student, Canvas, or third-party materials.",
+  "courses": [
+    {"id": "101", "folder": "Synthetic/Finance", "name": "Corporate Finance", "code": "FIN101"},
+    {"id": "202", "folder": "Synthetic/Science", "name": "Cell Biology", "code": "BIO202"},
+    {"id": "303", "folder": "Synthetic/Humanities", "name": "Historical Methods", "code": "HIST303"}
+  ],
+  "documents": [
+    {
+      "path": "Synthetic/Finance/Files/Capital decisions.md", "type": "slides", "title": "Investment decisions",
+      "sections": [
+        {"locator": "Slide 1", "text": "The net present value method discounts incremental cash flows at the opportunity cost of capital. Accept an independent project when its net present value is positive. Sunk costs are excluded from incremental cash flows."},
+        {"locator": "Slide 2", "text": "Weighted average cost of capital combines the required return on equity with the after-tax cost of debt. Use market-value financing weights rather than book-value financing weights."},
+        {"locator": "Slide 3", "text": "The profitability index measures present value of future cash flows divided by the initial investment. Capital rationing can favor projects with a higher profitability index; project divisibility and mutual exclusivity still matter."},
+        {"locator": "Slide 4", "text": "For mutually exclusive projects, choose the project with the highest net present value at the relevant discount rate. A higher internal rate of return alone can give the wrong ranking when scale or timing differs."}
+      ]
+    },
+    {
+      "path": "Synthetic/Finance/Files/Bond risk.md", "type": "pdf", "title": "Fixed income",
+      "sections": [
+        {"locator": "Page 3", "text": "Modified duration approximates a bond's percentage price change for a small change in yield. Bond prices move inversely to yields: a rise in yield causes a fall in price."},
+        {"locator": "Page 4", "text": "Convexity corrects the curvature omitted by a linear duration approximation. For a plain fixed-rate bond, positive convexity improves the price estimate for larger yield changes."}
+      ]
+    },
+    {
+      "path": "Synthetic/Finance/Syllabus.md", "type": "syllabus", "title": "Finance assessment scope",
+      "sections": [{"locator": "Midterm", "text": "The midterm covers investment decisions and bond risk. Show the equation, substitute the stated inputs, and explain the economic interpretation. The exam excludes option-pricing models."}]
+    },
+    {
+      "path": "Synthetic/Science/Files/Cells.md", "type": "pdf", "title": "Cell processes",
+      "sections": [
+        {"locator": "Page 1", "text": "Osmosis is the movement of water across a selectively permeable membrane toward the side with higher solute concentration. A red blood cell in a hypotonic solution gains water and can lyse."},
+        {"locator": "Page 2", "text": "Enzymes lower activation energy without changing the reaction's equilibrium constant. An enzyme is not consumed by its reaction. The active site binds a substrate with chemical specificity."},
+        {"locator": "Page 3", "text": "Competitive inhibition occurs when an inhibitor competes with the substrate for the active site. Increasing substrate concentration can overcome competitive inhibition; apparent Km rises while Vmax is unchanged."},
+        {"locator": "Page 4", "text": "The mitochondrion supports aerobic cellular respiration. An electrochemical proton gradient across its inner membrane drives ATP synthase during oxidative phosphorylation."}
+      ]
+    },
+    {
+      "path": "Synthetic/Science/Files/Laboratory.md", "type": "document", "title": "Laboratory methods",
+      "sections": [{"locator": "Controls", "text": "A negative control omits the active treatment. A positive control uses a treatment known to produce the measured response. A control does not by itself eliminate every confounding variable."}]
+    },
+    {
+      "path": "Synthetic/Science/Files/Unrelated seminar.md", "type": "document", "title": "Visiting seminar vocabulary",
+      "sections": [
+        {"locator": "Page 9", "text": "In a history seminar, a historian weighs competing accounts. In a finance seminar, an analyst decides whether an investment creates value. These examples illustrate cross-disciplinary vocabulary, not this biology course's exam scope."},
+        {"locator": "Page 10", "text": "What happens to a bond when borrowing rates go up? This is a visiting lecturer's discussion prompt. It is not a cell biology assessment topic and supplies no finance answer."}
+      ]
+    },
+    {
+      "path": "Synthetic/Humanities/Files/Methods.md", "type": "pdf", "title": "Historical reasoning",
+      "sections": [
+        {"locator": "Page 1", "text": "A primary source was created within the period being investigated, such as a contemporary diary. A secondary source interprets or analyzes that period after the fact. Classification depends on the research question."},
+        {"locator": "Page 2", "text": "Contextualization places a source in its historical time and setting. Consider the author's position, intended audience, purpose, and available information rather than imposing present-day assumptions."},
+        {"locator": "Page 3", "text": "Historiography studies how historians interpret the past and how those interpretations change. A historiographical comparison identifies each interpretation's claim, evidence, and assumptions."},
+        {"locator": "Page 4", "text": "A causal historical argument distinguishes a background condition from a proximate trigger. Temporal sequence alone does not establish causation; compare alternative explanations using the available evidence."}
+      ]
+    },
+    {
+      "path": "Synthetic/Humanities/Assignments/Essay.md", "type": "assignment", "title": "Essay instructions",
+      "sections": [{"locator": "Rubric", "text": "The essay rubric rewards a precise thesis, analysis of primary evidence, engagement with a counterargument, and accurate citations. A summary of events without an argued thesis does not meet the analysis criterion."}]
+    },
+    {
+      "path": "Synthetic/Humanities/Files/Cross course distractor.md", "type": "document", "title": "Glossary from another discipline",
+      "sections": [
+        {"locator": "Page 8", "text": "What is the hurdle rate when financing comes from borrowing and shareholders? What happens when a cell is surrounded by a dilute solution? These are examples of questions from other disciplines and are not answered in this historical methods reading."}
+      ]
+    },
+    {
+      "path": "Synthetic/Finance/Files/Old instructions.md", "type": "document", "title": "Old finance instructions", "sync_status": "stale",
+      "sections": [{"locator": "Page 1", "text": "Legacyexerciseprotocol: this cached instruction is from an update that failed. It cannot establish the current exam requirements."}]
+    },
+    {
+      "path": "Synthetic/Science/Files/Restricted reading.md", "type": "pdf", "title": "Restricted reading", "sync_status": "restricted",
+      "sections": [{"locator": "Page 1", "text": "Restrictedreadingprotocol: this historical copy cannot establish the currently accessible class content."}]
+    },
+    {
+      "path": "Synthetic/Humanities/_Removed from Canvas/Old scope.md", "type": "document", "title": "Removed exam scope",
+      "sections": [{"locator": "Page 1", "text": "Removedscopeprotocol: this reading was removed and cannot establish the current exam scope."}]
+    }
+  ],
+  "questions": [
+    {"id": "fin-npv", "course": "Synthetic/Finance", "query": "Should management greenlight a factory expansion?", "alternate_queries": ["net present value incremental cash flows"], "expected": [{"path": "Synthetic/Finance/Files/Capital decisions.md", "locator": "Slide 1"}]},
+    {"id": "fin-wacc", "course": "Synthetic/Finance", "query": "What is the hurdle rate when financing comes from borrowing and shareholders?", "alternate_queries": ["weighted average cost capital after tax debt equity"], "expected": [{"path": "Synthetic/Finance/Files/Capital decisions.md", "locator": "Slide 2"}]},
+    {"id": "fin-duration", "course": "Synthetic/Finance", "query": "What happens to a bond when borrowing rates go up?", "alternate_queries": ["modified duration yield price change"], "expected": [{"path": "Synthetic/Finance/Files/Bond risk.md", "locator": "Page 3"}]},
+    {"id": "fin-direct", "course": "Synthetic/Finance", "query": "profitability index capital rationing", "alternate_queries": [], "expected": [{"path": "Synthetic/Finance/Files/Capital decisions.md", "locator": "Slide 3"}]},
+    {"id": "bio-osmosis", "course": "Synthetic/Science", "query": "Why might erythrocytes burst in diluted saline?", "alternate_queries": ["osmosis hypotonic water"], "expected": [{"path": "Synthetic/Science/Files/Cells.md", "locator": "Page 1"}]},
+    {"id": "bio-enzyme", "course": "Synthetic/Science", "query": "How do biological catalysts make reactions easier?", "alternate_queries": ["enzymes activation energy equilibrium constant"], "expected": [{"path": "Synthetic/Science/Files/Cells.md", "locator": "Page 2"}]},
+    {"id": "bio-inhibition", "course": "Synthetic/Science", "query": "Why can adding more reactant overcome a blocker at the binding pocket?", "alternate_queries": ["competitive inhibition substrate active site"], "expected": [{"path": "Synthetic/Science/Files/Cells.md", "locator": "Page 3"}]},
+    {"id": "bio-direct", "course": "Synthetic/Science", "query": "mitochondrion proton gradient ATP synthase", "alternate_queries": [], "expected": [{"path": "Synthetic/Science/Files/Cells.md", "locator": "Page 4"}]},
+    {"id": "hist-primary", "course": "Synthetic/Humanities", "query": "Is a diary written during an event an original account or later commentary?", "alternate_queries": ["primary source contemporary diary secondary source"], "expected": [{"path": "Synthetic/Humanities/Files/Methods.md", "locator": "Page 1"}]},
+    {"id": "hist-context", "course": "Synthetic/Humanities", "query": "Why does a writer's social situation matter when interpreting an artifact?", "alternate_queries": ["contextualization historical time setting author purpose"], "expected": [{"path": "Synthetic/Humanities/Files/Methods.md", "locator": "Page 2"}]},
+    {"id": "hist-historiography", "course": "Synthetic/Humanities", "query": "How can I compare competing historians' accounts?", "alternate_queries": ["historiography interpretations claim evidence assumptions"], "expected": [{"path": "Synthetic/Humanities/Files/Methods.md", "locator": "Page 3"}]},
+    {"id": "hist-direct", "course": "Synthetic/Humanities", "query": "causal historical argument proximate trigger", "alternate_queries": [], "expected": [{"path": "Synthetic/Humanities/Files/Methods.md", "locator": "Page 4"}]},
+    {"id": "fin-missing", "course": "Synthetic/Finance", "query": "\"Black Scholes calibration\"", "alternate_queries": ["\"Black Scholes calibration\""], "expected": []},
+    {"id": "bio-missing", "course": "Synthetic/Science", "query": "\"quantum tunneling mechanism\"", "alternate_queries": ["\"quantum tunneling mechanism\""], "expected": []},
+    {"id": "hist-missing", "course": "Synthetic/Humanities", "query": "\"Treaty of Utrecht clauses\"", "alternate_queries": ["\"Treaty of Utrecht clauses\""], "expected": []}
+  ]
+}
