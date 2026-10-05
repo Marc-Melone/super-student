@@ -4,7 +4,7 @@
 
 The app is small: a launcher script, Super Student as a ready-built package (a wheel, so nothing is ever
 built or written inside the app on a student's Mac), the exact versions of everything it depends on for each
-kind of Mac (Apple Silicon, Intel), all available as ready-made downloads for macOS 11 and later, and pinned
+kind of Mac (Apple Silicon, Intel), all available as ready-made downloads for macOS 13 and later, and pinned
 checksums for the installer (uv) it downloads from PyPI on first run to set up a private Python in
 ~/.superstudent.
 """
@@ -43,12 +43,15 @@ UV_PINS = {  # platform: (sha256, url) of the official uv wheels on PyPI
 }
 
 MAC_TARGETS = {"arm64": "aarch64-apple-darwin", "x86_64": "x86_64-apple-darwin"}   # `uname -m` -> uv platform
-MIN_MACOS = "11.0"
+MIN_MACOS = "13.0"
 EXTRAS = ("media", "gui")
 SOURCE_ONLY = ("proxy-tools",)     # pure-Python packages published without a wheel (safe to build anywhere)
 
 HOW_TO_INSTALL = """How to install Super Student on your Mac
 =========================================
+
+Personal use only while Canvas integration approval is unresolved. Connect only your own account
+and follow your institution's rules. Do not onboard other users through personal access tokens.
 
 1. Drag "Super Student" into your Applications folder.
 
@@ -65,6 +68,10 @@ HOW_TO_INSTALL = """How to install Super Student on your Mac
 
 4. Follow the steps in the window: your school, a Canvas access token, your courses, and whether you
    study with ChatGPT, Claude or both.
+
+Updating an older copy: quit Super Student, replace it in Applications with this copy, then open it.
+Its private runtime updates automatically; your course library and settings are kept. Restart ChatGPT
+and Claude afterward so their connectors use the new version.
 
 To remove it later: open Super Student > Settings > Uninstall, then drag the app to the Trash.
 """
@@ -122,7 +129,7 @@ def build_uv() -> Path:
 
 def lock_dependencies(res: Path) -> None:
     """constraints-<arch>.txt: the exact version of every dependency, chosen so each one has a ready-made
-    download (a wheel) for that kind of Mac on macOS 11 or later. Nothing has to be compiled on a student's
+    download (a wheel) for that kind of Mac on macOS 13 or later. Nothing has to be compiled on a student's
     Mac (which would need developer tools they don't have), and every student gets the same tested set."""
     import tomllib
 
