@@ -21,7 +21,7 @@ its own, converts it into searchable text with exact page, slide and timestamp m
 originals so the AI can look at the real slide when a chart or formula matters, and connects it all to
 the assistant you use. One library and one sync serve both.
 
-![The Super Student dashboard: your courses, what's due, search, and the study pass](docs/screenshots/dashboard.png)
+![The Super Student dashboard: your courses, what's due, search, and source notes](docs/screenshots/dashboard.png)
 
 **New here? The [Super Student website](https://marc-melone.github.io/super-student/) explains it in plain language.**
 
