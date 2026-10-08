@@ -1195,6 +1195,9 @@ function openExamPlan(c, id) {
       if (!r.ok) { body.replaceChildren(el("p", { class: "err" }, r.message || "Couldn't load this exam.")); return; }
       p = r.plan; draw();
     }
+    function refreshed(plan) {           // a practice step already returned the updated workspace: no reload needed
+      if (plan && plan.id === id) { p = plan; draw(); } else load();
+    }
     async function reviewScope() {
       const r = await api("/api/exam/review-scope", { plan_id: id });
       if (!r.ok) { toast(r.message || "Couldn't update this workspace.", true); return; }
@@ -1251,7 +1254,7 @@ function openExamPlan(c, id) {
         sorted.length ? el("div", { class: "choices" }, sorted.map(q => el("div", { class: "choice", style: "display:block" },
           el("div", { class: "row" }, el("strong", null, q.topic || "Practice"), el("span", { class: "spacer" }),
             el("button", { class: "btn quiet small", onclick: () => removeQuestion(q) }, "Remove"),
-            el("button", { class: "btn small", disabled: q.status === "stale", onclick: () => openPractice(id, q, load) }, q.status === "stale" ? "Needs regenerating" : "Practice")),
+            el("button", { class: "btn small", disabled: q.status === "stale", onclick: () => openPractice(id, q, refreshed) }, q.status === "stale" ? "Needs regenerating" : "Practice")),
           el("p", { class: "muted small", style: "margin:6px 0" }, q.prompt),
           el("div", { class: "small muted" }, (q.difficulty || "") + " · " + (q.type === "mcq" ? "Quiz" : "Self-assessed answer") + " · " + plural(q.attempt_count || 0, "attempt")),
           q.status === "stale" ? el("p", { class: "err small" }, "Source changed or unavailable. Ask your AI to regenerate this question, then remove this one.") : null,
@@ -1340,10 +1343,10 @@ function openPractice(planId, q, onSaved) {
             feedback.querySelectorAll("button").forEach(b => { b.disabled = true; });
             const saved = await api("/api/exam/attempt", { plan_id: planId, question_id: q.id, answer: answer.value, self_rating: rating });
             if (!saved.ok) { error.textContent = saved.message; feedback.querySelectorAll("button").forEach(b => { b.disabled = false; }); return; }
-            error.textContent = ""; toast("Self-assessment saved. Review schedule updated."); onSaved(); close();
+            error.textContent = ""; toast("Self-assessment saved. Review schedule updated."); onSaved(saved.plan); close();
           } }, label))))));
       submit.hidden = true;
-      if (q.type === "mcq") onSaved();
+      if (q.type === "mcq") onSaved(r.plan);
     }
     return [el("p", { style: "white-space:pre-wrap" }, q.prompt), q.type === "mcq" ? options : answer, error, submit, feedback,
       el("div", { class: "sheet-foot" }, el("button", { class: "btn", onclick: close }, "Close"))];

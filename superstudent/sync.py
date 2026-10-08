@@ -1390,7 +1390,8 @@ class CourseSync:
             original, sidecar = self.s.lib.checked(original), self.s.lib.checked(sidecar)
             meta, _ = parse_front_matter(sidecar.read_text(encoding="utf-8"))
             expected = meta.get("source_sha256")
-            if not expected or expected != file_digest(original):
+            # Reuses the fingerprint while the original is untouched (any write changes its signature).
+            if not expected or expected != self.s.lib.digest(original):
                 return False
             if meta.get("type") == "archive":
                 directory = self.s.lib.checked(original.parent / (original.name + " (unzipped)"))

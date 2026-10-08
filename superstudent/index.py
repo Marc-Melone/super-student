@@ -8,10 +8,13 @@ from __future__ import annotations
 
 import re
 import sqlite3
+import threading
+from collections import OrderedDict
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
-from .util import REMOVED_DIR, parse_front_matter
+from .util import (REMOVED_DIR, as_one_action, cached_digest, front_matter_view, parse_front_matter, settled,
+                   stat_signature)
 
 INDEX_VERSION = 3
 SKIP_NAMES = {"INDEX.md", "CLAUDE.md", "AGENTS.md", "README.md"}
@@ -91,11 +94,6 @@ def _reader(lib) -> Optional[sqlite3.Connection]:
     return conn
 
 
-def _stat_signature(path: Path) -> str:
-    """Size, modification time, file identity and change time. Any write to a file changes its change time,
-    even when its size and modification time are put back."""
-    st = path.stat()
-    return f"{st.st_size}:{st.st_mtime_ns}:{st.st_ino}:{st.st_ctime_ns}"
 
 
 def _described_original(lib, sidecar: Path, descriptions: Dict[str, Any]) -> Tuple[bool, Optional[Path]]:
@@ -107,22 +105,26 @@ def _described_original(lib, sidecar: Path, descriptions: Dict[str, Any]) -> Tup
     return original_rel in descriptions, original
 
 
-def _source_version(original: Optional[Path], previous: Tuple[str, str] = ("", "")) -> Tuple[str, str]:
-    """(digest, stat signature) of a described original. The digest recorded with the same signature is
-    reused: the file hasn't been written since it was read."""
+def _source_version(original: Optional[Path], previous: Tuple[str, str] = ("", ""), lib=None) -> Tuple[str, str]:
+    """(digest, signature) of a described original. A digest recorded with the same signature is reused: the
+    file hasn't been written since it was read (see util.settled). A signature is only recorded if the file had
+    settled when it was read, so a file written moments ago is checked again next time."""
     if original is None or not original.is_file():
         return "missing", ""
-    from .util import file_digest
+    signature = stat_signature(original)
+    if signature is None:
+        return "unavailable", ""
+    text = ":".join(str(part) for part in signature)
+    ready = settled(signature)                         # judged before reading
+    if ready and previous[0] and previous[1] == text and previous[0] not in ("missing", "unavailable"):
+        return previous[0], text
     try:
-        signature = _stat_signature(original)
-        if previous[0] and previous[1] == signature and previous[0] not in ("missing", "unavailable"):
-            return previous[0], signature
-        digest = file_digest(original)
-        if _stat_signature(original) != signature:      # written while it was read: don't trust either
-            return "unavailable", ""
-        return digest, signature
+        digest = lib.digest(original) if lib is not None else cached_digest(original)
     except OSError:
         return "unavailable", ""
+    if stat_signature(original) != signature:          # written while it was read: don't trust either
+        return "unavailable", ""
+    return digest, (text if ready else "")
 
 
 def _course_of(rel: str) -> str:
@@ -232,7 +234,7 @@ def update_index(lib, log: Optional[Callable[[str], None]] = None, full: bool = 
     from . import describe
 
     conn = _connect(lib, timeout=wait)
-    descriptions = describe.load(lib)
+    descriptions = describe.load_view(lib)
     row = conn.execute("SELECT value FROM meta WHERE key = 'text_version'").fetchone()
     if not row or row[0] != TEXT_VERSION:
         full = True
@@ -255,7 +257,7 @@ def update_index(lib, log: Optional[Callable[[str], None]] = None, full: bool = 
                 described, original = _described_original(lib, resolved, descriptions)
                 if described:
                     previous = ("", "") if full else known.get(rel, (0, 0, "", ""))[2:]
-                    source_version, source_stat = _source_version(original, previous)
+                    source_version, source_stat = _source_version(original, previous, lib)
             except (OSError, ValueError):
                 continue
             if not full and rel in known and known[rel][:3] == (st.st_mtime, st.st_size, source_version):
@@ -322,6 +324,7 @@ def _terms(query: str) -> Tuple[List[str], List[str]]:
     return fts, cleaned
 
 
+@as_one_action
 def search(lib, query: str, course: str = "", kind: str = "", limit: int = 10, per_doc: int = 3,
            markers: tuple = ("**", "**"), alternate_queries: Optional[List[str]] = None) -> List[Dict[str, Any]]:
     """Search literal course text, optionally combining up to four alternate phrasings.
@@ -357,9 +360,9 @@ def search(lib, query: str, course: str = "", kind: str = "", limit: int = 10, p
     conn = _reader(lib)
     if conn is None:
         return []
-    descriptions = describe.load(lib)
+    descriptions = describe.load_view(lib)
     current_text = _CurrentText(lib, markers)
-    state = lib.load_state()
+    state = lib.state_view()
     filters = []
     params: List[Any] = []
     if course:
@@ -474,7 +477,7 @@ def _entry_current(lib, sidecar: Path, entry, descriptions: Dict[str, Any]) -> b
     recorded = entry[2]
     if not described:
         return not recorded                  # descriptions indexed for it no longer apply
-    return bool(recorded) and _source_version(original, (recorded, entry[3]))[0] == recorded
+    return bool(recorded) and _source_version(original, (recorded, entry[3]), lib)[0] == recorded
 
 
 class _CurrentText:
@@ -533,42 +536,83 @@ def is_removed(path: str) -> bool:
     return f"/{REMOVED_DIR}/" in f"/{path}"
 
 
+_LOOKUPS: "OrderedDict[int, tuple]" = OrderedDict()     # id(course record view) -> (view, paths, pictures)
+_LOOKUPS_LOCK = threading.Lock()
+
+
+def _build_lookup(state) -> Tuple[Dict[str, list], Dict[str, list]]:
+    """Every record item by its paths, and by its pictures folder: path -> [(course position, item position,
+    item)] in record order."""
+    paths_of: Dict[str, list] = {}
+    assets_of: Dict[str, list] = {}
+    for c_index, course in enumerate(state.get("courses", {}).values()):
+        folder = course.get("folder") or ""
+        for i_index, item in enumerate((course.get("items") or {}).values()):
+            paths = {folder + "/" + p for p in (item.get("path"), item.get("text")) if p}
+            paths.update(p + ".md" for p in list(paths) if not p.endswith(".md"))
+            entry = (c_index, i_index, item)
+            for path in paths:
+                paths_of.setdefault(path, []).append(entry)
+            for prefix in {p[:-3] + ".assets/" if p.endswith(".md") else p + ".assets/" for p in paths}:
+                assets_of.setdefault(prefix, []).append(entry)
+    return paths_of, assets_of
+
+
+def _view_lookup(view) -> Tuple[Dict[str, list], Dict[str, list]]:
+    """The lookup for the shared course record view, built once per version of the record."""
+    with _LOOKUPS_LOCK:
+        hit = _LOOKUPS.get(id(view))
+        if hit is not None and hit[0] is view:
+            return hit[1], hit[2]
+    lookup = _build_lookup(view)
+    with _LOOKUPS_LOCK:
+        _LOOKUPS[id(view)] = (view, *lookup)       # holding the view keeps its id from being reused
+        while len(_LOOKUPS) > 4:
+            _LOOKUPS.popitem(last=False)
+    return lookup
+
+
+def _record_items(lib, rel: str, state=None) -> List[Dict[str, Any]]:
+    """The record items describing a library path (the file, its text version or a picture saved from it): in
+    each course, the first matching item, in record order."""
+    view = lib.state_view()
+    paths_of, assets_of = _view_lookup(view) if state is None or state is view else _build_lookup(state)
+    matches = list(paths_of.get(rel, ()))
+    at = rel.find(".assets/")
+    while at >= 0:                       # a path inside a pictures folder belongs to the file the folder is for
+        matches.extend(assets_of.get(rel[:at + len(".assets/")], ()))
+        at = rel.find(".assets/", at + 1)
+    first: Dict[int, Tuple[int, Dict[str, Any]]] = {}
+    for c_index, i_index, item in matches:
+        if c_index not in first or i_index < first[c_index][0]:
+            first[c_index] = (i_index, item)
+    return [first[c_index][1] for c_index in sorted(first)]
+
+
 def material_status(lib, rel: str, state=None) -> Dict[str, Any]:
-    """Carry known source availability into every reading surface, including saved notes."""
+    """Carry known source availability into every reading surface, including saved notes. Without `state`, the
+    shared course record view is used, looked up through a table built once per version of the record."""
     result = {"status": "current", "stale": False, "last_successful_sync": "",
               "last_successful_version": "", "message": ""}
     if is_removed(rel):
         return {**result, "status": "removed", "stale": True,
                 "message": "Historical copy: removed from Canvas; check current course material."}
-    state = lib.load_state() if state is None else state
     sidecar_rel = rel if rel.endswith(".md") else rel + ".md"
     if ".assets/" in rel:
         sidecar_rel = rel.split(".assets/", 1)[0] + ".md"
-    for course in state.get("courses", {}).values():
-        folder = course.get("folder") or ""
-        for item in (course.get("items") or {}).values():
-            paths = {folder + "/" + p for p in (item.get("path"), item.get("text")) if p}
-            paths.update(p + ".md" for p in list(paths) if not p.endswith(".md"))
-            assets = {p[:-3] + ".assets/" if p.endswith(".md") else p + ".assets/" for p in paths}
-            if rel not in paths and not any(rel.startswith(p) for p in assets):
-                continue
-            result.update(last_successful_sync=item.get("last_successful_sync") or "",
-                          last_successful_version=item.get("successful_stamp") or item.get("stamp") or "")
-            status = item.get("status")
-            if status == "locked" or item.get("locked"):
-                result.update(status="restricted", stale=True,
-                              message="Historical copy: Canvas now marks this file locked or restricted. Do not treat it as current.")
-            elif status in ("failed", "too_large", "pending") or item.get("stale"):
-                result.update(status="stale", stale=True,
-                              message="This source is not up to date: its latest download failed or is pending. Check Canvas before relying on it.")
-            break
+    for item in _record_items(lib, rel, state):
+        result.update(last_successful_sync=item.get("last_successful_sync") or "",
+                      last_successful_version=item.get("successful_stamp") or item.get("stamp") or "")
+        status = item.get("status")
+        if status == "locked" or item.get("locked"):
+            result.update(status="restricted", stale=True,
+                          message="Historical copy: Canvas now marks this file locked or restricted. Do not treat it as current.")
+        elif status in ("failed", "too_large", "pending") or item.get("stale"):
+            result.update(status="stale", stale=True,
+                          message="This source is not up to date: its latest download failed or is pending. Check Canvas before relying on it.")
     sidecar = lib.resolve(sidecar_rel)
     if sidecar is not None and sidecar.is_file():
-        try:
-            meta, _ = parse_front_matter(sidecar.read_text(encoding="utf-8"))
-        except (OSError, UnicodeDecodeError):
-            meta = {}
-        marker = meta.get("sync_status")
+        marker = front_matter_view(sidecar).get("sync_status")
         if marker == "restricted":
             result.update(status="restricted", stale=True,
                           message="Historical copy: Canvas now marks this source locked or restricted. Do not treat it as current.")
@@ -578,7 +622,7 @@ def material_status(lib, rel: str, state=None) -> Dict[str, Any]:
     if "/Study Notes/" in "/" + rel:
         from . import notes
         from .outline import course_documents
-        store = notes.load(lib)
+        store = notes.load_view(lib)
         for source, entry in store.items():
             if entry.get("file") != rel:
                 continue
@@ -617,7 +661,7 @@ def course_folders(lib, course: str) -> List[str]:
     want = _simple(course)
     if not want:
         return []
-    registered = lib.load_state().get("courses", {})
+    registered = lib.state_view().get("courses", {})
     exact = [c["folder"] for c in registered.values() if c.get("folder") == course]
     if exact:
         return list(dict.fromkeys(exact))
@@ -633,6 +677,7 @@ def _like_prefix(folder: str) -> str:
     return folder.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "/%"
 
 
+@as_one_action
 def list_documents(lib, course: str = "", kind: str = "") -> List[Dict[str, Any]]:
     if not lib.index_path.exists():
         return []

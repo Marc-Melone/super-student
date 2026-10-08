@@ -29,7 +29,7 @@ from .. import __version__
 from ..config import (APP_DIR, DEFAULTS, IS_MAC, delete_token, get_token, library_path, load_config,
                       normalize_canvas_url, save_config, set_token)
 from ..library import Library
-from ..util import atomic_write_json, fmt_dt, human_size, parse_dt, read_json
+from ..util import as_one_action, atomic_write_json, fmt_dt, human_size, parse_dt, read_json
 
 HERE = Path(__file__).resolve().parent
 INFO_FILE = APP_DIR / "app-window.json"
@@ -92,6 +92,7 @@ class App:
                 webbrowser.open(args[-1])
 
     # ------------------------------------------------------------------ state
+    @as_one_action
     def state(self) -> Dict[str, Any]:
         from ..assistants import claude_status, openai_status
         from ..extract import soffice_path, tesseract_available

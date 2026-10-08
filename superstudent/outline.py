@@ -8,13 +8,15 @@ The same walk (course_documents) tells the study pass which documents to study a
 from __future__ import annotations
 
 import re
+import threading
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 from urllib.parse import unquote
 
-from .util import front_matter, parse_front_matter
+from .util import (action_memo, as_one_action, front_matter, is_within, parse_front_matter, relative_posix,
+                   settled, stat_signature)
 from .util import atomic_write_text
 from .library import LibraryPathError
 
@@ -57,7 +59,7 @@ def _doc_for(lib, sidecar: Path) -> Tuple[str, Path]:
     sidecar = lib.checked(sidecar)
     original = lib.checked(sidecar.with_name(sidecar.name[:-3]))
     target = original if original.suffix and original.is_file() else sidecar
-    return target.relative_to(lib.root.resolve()).as_posix(), sidecar
+    return relative_posix(target, lib.root), sidecar
 
 
 def parse_units(text: str) -> List[Unit]:
@@ -95,9 +97,46 @@ def parse_units(text: str) -> List[Unit]:
     return units
 
 
+_DOCS: Dict[tuple, tuple] = {}          # documents read by earlier actions (see _load)
+_DOCS_LOCK = threading.Lock()
+MAX_REMEMBERED_DOCS = 20000
+
+
 def _load(lib, sidecar: Path, section: str) -> Optional[Doc]:
+    """A document's title, units and availability. A document is read again only when something it depends on
+    changed: its text version, its original, the course record or the saved picture descriptions. Results are
+    reused between actions only if all of those files had settled when they were read (see util.settled); within
+    one action (study progress walks every document more than once), they're reused unless a signature changes."""
     try:
         sidecar = lib.checked(sidecar)
+    except LibraryPathError:
+        return None
+    key = ("doc", str(lib.root), str(sidecar), section)
+    original = sidecar.with_name(sidecar.name[:-3])
+    signatures = (stat_signature(sidecar), stat_signature(original), stat_signature(lib.state_path),
+                  stat_signature(lib.meta / "descriptions.json"))
+    memo = action_memo()
+    if memo is not None and memo.get(key, (None,))[0] == signatures:
+        return memo[key][1]
+    # Judged before reading: a write after this changes a signature.
+    ready = signatures[0] is not None and all(sig is None or settled(sig) for sig in signatures)
+    hit = _DOCS.get(key) if ready else None
+    if hit is not None and hit[0] == signatures:
+        doc = hit[1]
+    else:
+        doc = _read_doc(lib, sidecar, section)
+        if ready:
+            with _DOCS_LOCK:
+                _DOCS[key] = (signatures, doc)
+                while len(_DOCS) > MAX_REMEMBERED_DOCS:
+                    _DOCS.pop(next(iter(_DOCS)))
+    if memo is not None:
+        memo[key] = (signatures, doc)
+    return doc
+
+
+def _read_doc(lib, sidecar: Path, section: str) -> Optional[Doc]:
+    try:
         rel, _ = _doc_for(lib, sidecar)
         text = sidecar.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError, LibraryPathError):
@@ -131,16 +170,20 @@ def _has_review(sidecar: Path) -> bool:
         return False
 
 
+@as_one_action
 def course_documents(lib, course_dir: Path, include_light: bool = False) -> List[Doc]:
     """Every document in the course: module by module in the instructor's order, then everything else."""
     docs: List[Doc] = []
     seen = set()
     course_dir = lib.checked(course_dir)
-    root = lib.root.resolve()
+    root = lib.root
 
     def add(sidecar: Path, section: str) -> None:
-        key = sidecar.resolve()
-        if key in seen or not sidecar.is_file() or sidecar.name in GENERATED or root not in key.parents:
+        try:
+            key = lib.checked(sidecar)
+        except LibraryPathError:       # a link pointing outside the library
+            return
+        if key in seen or key == root or not sidecar.is_file() or sidecar.name in GENERATED:
             return
         if any(p in SKIP_PARTS for p in sidecar.parts):
             return
@@ -174,14 +217,14 @@ def course_documents(lib, course_dir: Path, include_light: bool = False) -> List
                 path = (mdir / unquote(target)).resolve()
                 sidecar = path if path.suffix == ".md" else path.with_name(path.name + ".md")
                 try:
-                    top = sidecar.relative_to(course_dir).parts[0]
+                    top = relative_posix(sidecar, course_dir).split("/")[0]
                 except ValueError:
                     continue
-                inside = mdir in sidecar.parents
+                inside = is_within(sidecar, mdir)
                 if inside or wanted(sidecar, top):
                     add(sidecar, section)
         for sidecar in sorted(mdir.rglob("*.md")):      # anything in the module folder not linked above
-            if not any(p.endswith(".assets") for p in sidecar.relative_to(mdir).parts[:-1]):
+            if not any(p.endswith(".assets") for p in relative_posix(sidecar, mdir).split("/")[:-1]):
                 add(sidecar, section)
     sections = STUDY_SECTIONS[1:] + (LIGHT_SECTIONS if include_light else ("Quizzes",))
     for top in sections:
@@ -192,7 +235,7 @@ def course_documents(lib, course_dir: Path, include_light: bool = False) -> List
         if folder is None:
             continue
         for sidecar in sorted(folder.rglob("*.md")) if folder.exists() else []:
-            parts = sidecar.relative_to(folder).parts
+            parts = relative_posix(sidecar, folder).split("/")
             if any(p.endswith(".assets") or p.startswith(".") for p in parts[:-1]):
                 continue
             if wanted(sidecar, top):
@@ -226,6 +269,7 @@ def _flag(unit: Unit) -> str:
     return f" [{kind}{', described' if unit.described else ''}]"
 
 
+@as_one_action
 def write_outline(lib, course_dir: Path, label: str, notes_status=None) -> Path:
     """Write <course>/OUTLINE.md. `notes_status(rel) -> str` adds whether each document has study notes."""
     docs = course_documents(lib, course_dir, include_light=True)

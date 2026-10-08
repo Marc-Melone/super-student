@@ -29,7 +29,7 @@ from urllib.parse import unquote
 
 from .library import LibraryPathError, _try_lock, _unlock
 from .outline import GENERATED, LIGHT_SECTIONS, LINK, SKIP_PARTS, STUDY_SECTIONS, _load
-from .util import atomic_write_json
+from .util import atomic_write_bytes, is_within, one_action, relative_posix
 
 VERSION = 1
 MAX_STORE_BYTES = 16 * 1024 * 1024
@@ -50,7 +50,8 @@ def _api(fn):
     @functools.wraps(fn)
     def call(*args, **kwargs):
         try:
-            return fn(*args, **kwargs)
+            with one_action():             # each source is read and fingerprinted once per request
+                return fn(*args, **kwargs)
         except (ExamError, LibraryPathError, OSError, UnicodeError) as exc:
             return {"ok": False, "error": str(exc), "message": str(exc)}
         except (TypeError, KeyError):
@@ -185,9 +186,10 @@ def _validate_saved_plan(plan):
 
 
 def _save_store(lib, store):
-    if len((json.dumps(store, indent=1, ensure_ascii=False, sort_keys=True) + "\n").encode("utf-8")) > MAX_STORE_BYTES:
+    data = (json.dumps(store, indent=1, ensure_ascii=False, sort_keys=True) + "\n").encode("utf-8")
+    if len(data) > MAX_STORE_BYTES:
         raise ExamError("The exam store is full. The previous saved data was left unchanged.")
-    atomic_write_json(_store_path(lib), store)
+    atomic_write_bytes(_store_path(lib), data)       # the same bytes atomic_write_json would write
     try:
         os.chmod(_store_path(lib), 0o600)
     except OSError:
@@ -220,13 +222,13 @@ def _locked(lib, wait: float = 10):
 def _course(lib, wanted):
     wanted = _text(wanted, "Course", 500).casefold()
     courses = []
-    for cid, entry in lib.load_state().get("courses", {}).items():
+    for cid, entry in lib.state_view().get("courses", {}).items():
         folder = entry.get("folder") or ""
         if not isinstance(folder, str) or not folder:
             continue
         cdir = lib.resolve(folder)
         if (cdir is None or cdir == lib.root or not cdir.is_dir()
-                or cdir.relative_to(lib.root).as_posix() != folder):
+                or relative_posix(cdir, lib.root) != folder):
             continue
         courses.append((str(cid), entry, cdir))
     if wanted:
@@ -301,13 +303,13 @@ def _inventory(lib, cdir, modules, module_rows, source_cache=None):
         try:
             sidecar = lib.checked(path if path.suffix == ".md" else path.with_name(path.name + ".md"))
             original = lib.checked(sidecar.with_name(sidecar.name[:-3]))
-            if (cdir not in sidecar.parents or cdir not in original.parents or not sidecar.is_file()
+            if (not is_within(sidecar, cdir) or not is_within(original, cdir) or not sidecar.is_file()
                     or sidecar in seen or sidecar.name in GENERATED):
                 return
             if (not whole and not section.startswith("Modules/") and memberships.get(sidecar)
                     and not memberships[sidecar].intersection(modules)):
                 return
-            parts = sidecar.relative_to(cdir).parts
+            parts = tuple(relative_posix(sidecar, cdir).split("/"))
             if any(p in SKIP_PARTS or p in ("Study Notes", "_Removed from Canvas") or p.startswith(".") or p.endswith(".assets") for p in parts[:-1]):
                 return
             doc = _load(lib, sidecar, section)
@@ -316,9 +318,9 @@ def _inventory(lib, cdir, modules, module_rows, source_cache=None):
         except (LibraryPathError, OSError, ValueError):
             return
         seen.add(sidecar)
-        canonical = sidecar.relative_to(lib.root).as_posix()
+        canonical = relative_posix(sidecar, lib.root)
         try:
-            fp, legacy = source_fingerprints(lib, canonical, cdir.relative_to(lib.root).as_posix(),
+            fp, legacy = source_fingerprints(lib, canonical, relative_posix(cdir, lib.root),
                                              source_cache=source_cache)
             missing = doc.missing
         except ValueError as exc:
@@ -339,10 +341,10 @@ def _inventory(lib, cdir, modules, module_rows, source_cache=None):
     for module in rows:
         try:
             mdir = lib.checked(cdir / module["dir"])
-            if cdir not in mdir.parents or not mdir.is_dir():
+            if not is_within(mdir, cdir) or not mdir.is_dir():
                 continue
             contents = lib.checked(mdir / "_Module Contents.md")
-            if cdir not in contents.parents:
+            if not is_within(contents, cdir):
                 continue
             paths = []
             if contents.is_file():
@@ -355,7 +357,7 @@ def _inventory(lib, cdir, modules, module_rows, source_cache=None):
                 try:
                     sidecar = lib.checked(path if path.suffix == ".md" else path.with_name(path.name + ".md"))
                     original = lib.checked(sidecar.with_name(sidecar.name[:-3]))
-                    if cdir in sidecar.parents and cdir in original.parents and sidecar.is_file():
+                    if is_within(sidecar, cdir) and is_within(original, cdir) and sidecar.is_file():
                         memberships.setdefault(sidecar, set()).add(module["position"])
                 except (LibraryPathError, OSError):
                     continue
@@ -371,7 +373,7 @@ def _inventory(lib, cdir, modules, module_rows, source_cache=None):
             continue
         try:
             directory = lib.checked(cdir / top)
-            if cdir not in directory.parents:
+            if not is_within(directory, cdir):
                 continue
             for sidecar in sorted(directory.rglob("*.md")) if directory.is_dir() else []:
                 add(sidecar, top)

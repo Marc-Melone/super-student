@@ -149,6 +149,14 @@ has not changed their timestamp or size. These copies are left out of exam intel
 Successful retrieval clears the warning. Picture descriptions and study-note summaries are checked against
 the current source content; older records without source hashes need to be reviewed and saved again.
 
+These checks are quick: a file that hasn't been touched since it was last checked isn't read again. Super
+Student recognizes an untouched file by its size and dates, including the change date the system updates on
+every write (other apps can't set it back), and keeps fingerprints of checked originals in
+`~/SuperStudent/.superstudent/fingerprints.json`, so opening the app doesn't re-read every course file. A
+file written in the last few seconds is always read again. On a drive that doesn't keep change dates (an
+external drive formatted as FAT or exFAT), every check reads the files again: slower, just as strict. The
+fingerprint file is only a shortcut; if it's missing or damaged, files are simply read again.
+
 ## Install the Mac app (no Terminal needed)
 
 1. Unzip `SuperStudent-<version>-mac.zip` and drag **Super Student** into Applications.
@@ -416,6 +424,11 @@ access token in Canvas (Account → Settings → Approved Integrations).
 - `python tests/test_exam_workflow.py` checks the exam workflow through the real local HTTP and MCP interfaces.
 - `python tests/test_extraction_evidence.py` checks conversion provenance, unchanged-timestamp edits, ZIP
   member refresh and recording refresh using temporary files and mocked downloads/transcription.
+- `python tests/test_freshness_cache.py` checks that the quicker freshness checks are just as strict: an
+  original replaced by same-size content with its old date put back is still caught, files written moments
+  ago (or still changing when they were read) are read again, drives without change dates are never trusted,
+  saved fingerprints are reused only while files are untouched, and the course-record lookup gives the same
+  answers as a full scan. It also checks that unchanged files really are read only once.
 - `python benchmarks/exam_retrieval.py --require-improvement` runs the authored offline retrieval/evidence
   benchmark. Its limits are described in [benchmarks/README.md](benchmarks/README.md).
 

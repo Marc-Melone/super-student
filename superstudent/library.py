@@ -8,7 +8,8 @@ import time
 from pathlib import Path
 from typing import Any, Dict, Iterator, Optional
 
-from .util import atomic_write_json, now_iso, read_json
+from .util import (action_memo, atomic_write_json, cached_digest, change_times_tracked, is_within, now_iso, read_json,
+                   read_json_view)
 
 STATE_VERSION = 1
 
@@ -31,6 +32,19 @@ class Library:
         self.log_path = self.meta / "sync.log"
         self.last_sync_path = self.meta / "last_sync.json"
         self.renders = self.meta / "renders"
+        self._disk_checked = False
+        self._check_disk()
+
+    def _check_disk(self) -> None:
+        """Find out once whether this library's disk keeps real change times, which reusing fingerprints and
+        parsed files between actions relies on (see util.change_times_tracked)."""
+        if self._disk_checked:
+            return
+        try:
+            meta = self.checked(self.meta)
+        except LibraryPathError:
+            return
+        self._disk_checked = change_times_tracked(meta) is not None
 
     def ensure(self) -> None:
         if not self.root.exists():
@@ -47,18 +61,50 @@ class Library:
         Call again after deriving an adjacent original, text version or generated output.
         Nonexistent outputs are allowed only when their existing parents remain in the library.
         """
+        # Within one action (see util.one_action) a path is resolved once; the next action resolves it again. Links
+        # inside the library can only come from the student or another program on the Mac: course files (including
+        # unzipped ones) are written as plain files, and the connector never makes links.
+        memo = action_memo()
+        key = ("checked", str(self.root), os.fspath(path))
+        if memo is not None and key in memo:
+            return memo[key]
         try:
             candidate = Path(path).resolve()
-            if candidate == self.root or self.root in candidate.parents:
+            if candidate == self.root or is_within(candidate, self.root):
+                if memo is not None:
+                    memo[key] = candidate
                 return candidate
         except (OSError, RuntimeError):
             pass
         raise LibraryPathError("That path is outside the library.")
 
+    def fingerprint_store(self) -> Optional[Path]:
+        """Where fingerprints of untouched files are kept between app launches (see util.cached_digest)."""
+        self._check_disk()
+        try:
+            return self.checked(self.meta / "fingerprints.json")
+        except LibraryPathError:
+            return None
+
+    def digest(self, path: Path) -> str:
+        """The sha256 of a library file, reused while the file is untouched, across app launches too."""
+        return cached_digest(path, store=self.fingerprint_store())
+
     # -- state
     def load_state(self) -> Dict[str, Any]:
         state = read_json(self.checked(self.state_path), None) or {}
         state.setdefault("version", STATE_VERSION)
+        state.setdefault("courses", {})
+        return state
+
+    def state_view(self) -> Dict[str, Any]:
+        """The course record for code that only reads it: parsed once and reused until it changes. It's shared
+        by every caller, so never modify it; use load_state() for a copy to change and save."""
+        self._check_disk()
+        state = read_json_view(self.checked(self.state_path), None)
+        if not isinstance(state, dict):
+            state = {}
+        state.setdefault("version", STATE_VERSION)      # the same defaults load_state adds
         state.setdefault("courses", {})
         return state
 

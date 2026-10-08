@@ -13,6 +13,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import threading
 from pathlib import Path, PurePosixPath
 from typing import Any, Dict, List, Optional
 
@@ -20,9 +21,16 @@ from .describe import strip_blocks
 from .index import _norm_loc, _split_sections, heading_locator, material_status, unique_locators
 from .library import LibraryPathError
 from .outline import GENERATED
-from .util import REMOVED_DIR, file_digest, parse_front_matter
+from .util import (REMOVED_DIR, as_one_action, file_digest, is_within, known_digest, parse_front_matter, relative_posix,
+                   remember_digest, settled)
 
 MAX_CITATIONS = 30
+MAX_REMEMBERED_SOURCES = 2000
+# Parsed sources kept between requests. An entry is used only while every file it was read from (the text, its
+# original, the course record and any source archive) has exactly the same signature, and only files that had
+# settled are trusted this way (see util.stat_signature): the same rule the per-request cache already used.
+_SOURCES: Dict[tuple, Dict[str, Any]] = {}
+_SOURCES_LOCK = threading.Lock()
 MAX_QUOTE_CHARS = 12000
 EXCLUDED_PARTS = {"Study Notes", "_Study", "_Exam Packs", REMOVED_DIR}
 EXCLUDED_TYPES = {"study_notes", "outline", "overview", "exam_intel", "calendar", "module", "links", "grades"}
@@ -53,30 +61,32 @@ def _stamp(lib, path: Path) -> tuple:
 
 
 def _digest(lib, path: Path, source_cache=None) -> str:
-    """Share a guarded digest when several sources came from the same archive."""
+    """Share a guarded digest when several sources came from the same archive. A digest from an earlier request
+    is reused only while the file's signature (including the change time, which every write updates) is the
+    same, and only if the file had settled when it was read (see util.settled)."""
     signature = _stamp(lib, path)
     key = ("digest", str(lib.root), str(path))
     cached = source_cache.get(key) if source_cache is not None else None
     if cached and cached["signature"] == signature:
         return cached["digest"]
-    digest = file_digest(lib.checked(path))
-    if _stamp(lib, path) != signature:
-        raise EvidenceError("changed_during_read", "The source changed during verification; retry using the latest course text.")
+    checked = lib.checked(path)
+    store = lib.fingerprint_store()
+    digest = known_digest(checked, signature[1:], store) if len(signature) > 2 else None
+    if digest is None:
+        ready = len(signature) > 2 and settled(signature[1:])       # judged before reading
+        digest = file_digest(checked)
+        if _stamp(lib, path) != signature:
+            raise EvidenceError("changed_during_read", "The source changed during verification; retry using the latest course text.")
+        if len(signature) > 2:
+            remember_digest(checked, signature[1:], digest, store, read_settled=ready)
     if source_cache is not None:
         source_cache[key] = {"signature": signature, "digest": digest}
     return digest
 
 
 def _state(lib, source_cache=None) -> Dict[str, Any]:
-    signature = _stamp(lib, lib.state_path)
-    key = ("state", str(lib.root))
-    cached = source_cache.get(key) if source_cache is not None else None
-    if cached and cached["signature"] == signature:
-        return cached["state"]
-    state = lib.load_state()
-    if source_cache is not None and _stamp(lib, lib.state_path) == signature:
-        source_cache[key] = {"signature": signature, "state": state}
-    return state
+    """The shared course record view (reused until the record changes; never modified here)."""
+    return lib.state_view()
 
 
 def _course_dir(lib, course_folder: str, source_cache=None) -> Path:
@@ -85,13 +95,13 @@ def _course_dir(lib, course_folder: str, source_cache=None) -> Path:
     if folder not in registered:
         raise EvidenceError("invalid_course", "Choose the exact folder of one course in this library.")
     directory = lib.resolve(folder)
-    if directory is None or not directory.is_dir() or directory.relative_to(lib.root).as_posix() != folder:
+    if directory is None or not directory.is_dir() or relative_posix(directory, lib.root) != folder:
         raise EvidenceError("invalid_course", "That course folder is missing or resolves to another location.")
     return directory
 
 
 def _within(path: Path, directory: Path) -> bool:
-    return directory in path.parents
+    return is_within(path, directory)
 
 
 def _source(lib, course_folder: str, value: str, source_cache=None) -> Dict[str, Any]:
@@ -100,7 +110,7 @@ def _source(lib, course_folder: str, value: str, source_cache=None) -> Dict[str,
     lexical = lib.root / rel
     if not _within(lexical, lib.root / course_folder):
         raise EvidenceError("outside_course", "The citation must belong to the selected course.")
-    supplied_parts = lexical.relative_to(lib.root / course_folder).parts
+    supplied_parts = tuple(relative_posix(lexical, lib.root / course_folder).split("/"))
     if any(p in EXCLUDED_PARTS or p.startswith(".") or p.endswith(".assets") for p in supplied_parts) or lexical.name in GENERATED:
         raise EvidenceError("generated_source", "Use original course material rather than notes, summaries or historical copies.")
     target = lib.resolve(rel)
@@ -112,8 +122,8 @@ def _source(lib, course_folder: str, value: str, source_cache=None) -> Dict[str,
         raise EvidenceError("outside_course", "The text version resolves outside the selected course.")
     if not target.is_file():
         raise EvidenceError("missing_source", "The original course text is missing.")
-    canonical = target.relative_to(lib.root).as_posix()
-    parts = target.relative_to(directory).parts
+    canonical = relative_posix(target, lib.root)
+    parts = tuple(relative_posix(target, directory).split("/"))
     if any(p in EXCLUDED_PARTS or p.startswith(".") or p.endswith(".assets") for p in parts) or target.name in GENERATED:
         raise EvidenceError("generated_source", "Use original course material rather than notes, summaries or historical copies.")
     unpacked = any(p.endswith(" (unzipped)") for p in supplied_parts[:-1] + parts[:-1])
@@ -123,12 +133,18 @@ def _source(lib, course_folder: str, value: str, source_cache=None) -> Dict[str,
         if not _within(original, directory):
             raise EvidenceError("outside_course", "The adjacent original resolves outside the selected course.")
         signature = (_stamp(lib, target), _stamp(lib, original_path), _stamp(lib, lib.state_path))
+        # Whether this result may be reused by later requests: judged now, before anything is read.
+        ready = all(len(stamp) == 2 or settled(stamp[1:]) for stamp in signature)
         cache_key = ("source", str(lib.root), course_folder, canonical)
         cached = source_cache.get(cache_key) if source_cache is not None else None
+        shared = not cached and ready
+        if shared:
+            cached = _SOURCES.get(cache_key)        # from an earlier request, while every file is unchanged
         if cached and cached["signature"][:3] == signature and (not unpacked or cached.get("archive_path") is not None):
             archive_path = cached.get("archive_path")
             archive_stamp = (_stamp(lib, archive_path),) if archive_path is not None else ()
-            if cached["signature"] == signature + archive_stamp:
+            if cached["signature"] == signature + archive_stamp and not (
+                    shared and any(len(stamp) > 2 and not settled(stamp[1:]) for stamp in archive_stamp)):
                 return cached["source"]
         raw = target.read_text(encoding="utf-8")
         meta, body = parse_front_matter(raw)
@@ -160,12 +176,12 @@ def _source(lib, course_folder: str, value: str, source_cache=None) -> Dict[str,
             archive_path = lib.root / archive_rel
             if not _within(archive_path, lib.root / course_folder):
                 raise EvidenceError("outside_course", "The source archive must belong to the selected course.")
-            if any(p in EXCLUDED_PARTS or p.startswith(".") or p.endswith(".assets") for p in archive_path.relative_to(directory).parts):
+            if any(p in EXCLUDED_PARTS or p.startswith(".") or p.endswith(".assets") for p in relative_posix(archive_path, directory).split("/")):
                 raise EvidenceError("generated_source", "Use a current original archive rather than notes or historical copies.")
             archive = lib.checked(archive_path)
             if not _within(archive, directory):
                 raise EvidenceError("outside_course", "The source archive resolves outside the selected course.")
-            if any(p in EXCLUDED_PARTS or p.startswith(".") or p.endswith(".assets") for p in archive.relative_to(directory).parts):
+            if any(p in EXCLUDED_PARTS or p.startswith(".") or p.endswith(".assets") for p in relative_posix(archive, directory).split("/")):
                 raise EvidenceError("generated_source", "Use a current original archive rather than notes or historical copies.")
             if not archive.is_file():
                 raise EvidenceError("missing_archive", "The source archive is missing. Refresh the course to restore and unpack it before using this evidence.")
@@ -175,6 +191,7 @@ def _source(lib, course_folder: str, value: str, source_cache=None) -> Dict[str,
             archive_stamp = _stamp(lib, archive_path)
             if archive_stamp[0] != str(archive):
                 raise EvidenceError("changed_during_read", "The source archive changed during verification; retry using the latest course text.")
+            ready = ready and (len(archive_stamp) == 2 or settled(archive_stamp[1:]))
             signature += (archive_stamp,)
             archive_status = material_status(lib, archive_rel, state=_state(lib, source_cache))
             if archive_status["status"] != "current" or archive_status["stale"]:
@@ -192,7 +209,7 @@ def _source(lib, course_folder: str, value: str, source_cache=None) -> Dict[str,
         # 1.7.0 fingerprints also covered the path, the whole file and the Canvas version stamp. They're still
         # accepted while nothing they covered has changed, so existing practice survives the upgrade.
         legacy = {"path": canonical, "text": hashlib.sha256(raw.encode("utf-8")).hexdigest(),
-                  "original_path": original.relative_to(lib.root).as_posix() if has_original else "",
+                  "original_path": relative_posix(original, lib.root) if has_original else "",
                   "original": original_digest,
                   "status": status["status"], "version": status["last_successful_version"]}
         if archive_path is not None:
@@ -214,8 +231,14 @@ def _source(lib, course_folder: str, value: str, source_cache=None) -> Dict[str,
             after += (_stamp(lib, archive_path),)
         if after != signature:
             raise EvidenceError("changed_during_read", "The source changed during verification; retry using the latest course text.")
+        entry = {"signature": signature, "archive_path": archive_path, "source": source}
         if source_cache is not None:
-            source_cache[cache_key] = {"signature": signature, "archive_path": archive_path, "source": source}
+            source_cache[cache_key] = entry
+        if ready:
+            with _SOURCES_LOCK:
+                _SOURCES[cache_key] = entry
+                while len(_SOURCES) > MAX_REMEMBERED_SOURCES:
+                    _SOURCES.pop(next(iter(_SOURCES)))
     except LibraryPathError as exc:
         raise EvidenceError("outside_course", "The source resolves outside the library.") from exc
     except (OSError, UnicodeDecodeError) as exc:
@@ -296,6 +319,7 @@ def _validate(lib, course_folder: str, citations: List[Dict[str, Any]], recheck:
     return result
 
 
+@as_one_action
 def validate_evidence(lib, course_folder: str, citations: List[Dict[str, Any]],
                       source_cache: Optional[dict] = None) -> Dict[str, Any]:
     """Validate exact quoted citations against original, currently available text in one course.
@@ -307,6 +331,7 @@ def validate_evidence(lib, course_folder: str, citations: List[Dict[str, Any]],
     return _validate(lib, course_folder, citations, recheck=False, source_cache=source_cache)
 
 
+@as_one_action
 def recheck_evidence(lib, course_folder: str, records: List[Dict[str, Any]],
                      source_cache: Optional[dict] = None) -> Dict[str, Any]:
     """Check saved validated records again, also requiring the original source fingerprints to match."""

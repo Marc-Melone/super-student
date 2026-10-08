@@ -10,7 +10,8 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from .describe import strip_blocks
-from .util import REMOVED_DIR, atomic_write_text, fmt_date, fmt_dt, front_matter, parse_dt, parse_front_matter, truncate
+from .util import (REMOVED_DIR, as_one_action, atomic_write_text, fmt_date, fmt_dt, front_matter, parse_dt,
+                   parse_front_matter, truncate)
 
 GENERATED = {"COURSE_OVERVIEW.md", "EXAM_INTEL.md", "CALENDAR.md", "GRADES.md", "LINKS.md", "_Module Contents.md",
              "OUTLINE.md"}
@@ -127,6 +128,7 @@ def _is_exam(title: str) -> bool:
 
 # ---------------------------------------------------------------- course files
 
+@as_one_action
 def write_course_files(lib, cid: str, snap: Dict[str, Any], items: Dict[str, Dict[str, Any]], course_dir: Path) -> None:
     course_dir = lib.checked(course_dir)
     for name in ("COURSE_OVERVIEW.md", "CALENDAR.md", "GRADES.md", "EXAM_INTEL.md", "LINKS.md"):

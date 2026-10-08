@@ -652,15 +652,26 @@ class SearchDuringUpdatesTests(CourseFixture):
         db.close()
 
     def test_unchanged_described_original_is_not_reread_on_every_search(self):
-        from superstudent import describe
+        from superstudent import describe, util
         original = self.picture()
         self.assertTrue(describe.save(self.lib, original.relative_to(self.lib.root).as_posix(), "Image",
                                       "A scatter plot of risk against return with the efficient frontier.")["ok"])
-        update_index(self.lib)
-        self.assertTrue(search(self.lib, "efficient frontier"))
-        with patch("superstudent.util.file_digest", side_effect=AssertionError("original reread")):
-            self.assertTrue(search(self.lib, "efficient frontier"))
+        with patch.object(util, "SETTLE_NS", 0):          # the picture was last changed a while ago
             update_index(self.lib)
+            self.assertTrue(search(self.lib, "efficient frontier"))
+            with patch("superstudent.util.file_digest", side_effect=AssertionError("original reread")):
+                self.assertTrue(search(self.lib, "efficient frontier"))
+                update_index(self.lib)
+
+    def test_a_described_original_changed_moments_ago_is_checked_again(self):
+        from superstudent import describe, util
+        original = self.picture()
+        self.assertTrue(describe.save(self.lib, original.relative_to(self.lib.root).as_posix(), "Image",
+                                      "A scatter plot of risk against return with the efficient frontier.")["ok"])
+        update_index(self.lib)                              # just written: not trusted by its signature yet
+        with patch("superstudent.util.file_digest", wraps=util.file_digest) as digest:
+            self.assertTrue(search(self.lib, "efficient frontier"))
+            self.assertGreater(digest.call_count, 0)
 
     def test_changed_described_original_hides_its_old_description(self):
         from superstudent import describe

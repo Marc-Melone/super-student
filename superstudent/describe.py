@@ -14,7 +14,8 @@ from datetime import date
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
-from .util import REMOVED_DIR, atomic_write_json, atomic_write_text, file_digest, read_json
+from .util import (REMOVED_DIR, as_one_action, atomic_write_json, atomic_write_text, file_digest, relative_posix,
+                   read_json, read_json_view)
 from .library import LibraryPathError
 
 MARK = "> **What this shows**"
@@ -33,6 +34,11 @@ def load(lib) -> Dict[str, Dict[str, Dict[str, Any]]]:
     return read_json(_store_path(lib), {}) or {}
 
 
+def load_view(lib) -> Dict[str, Dict[str, Dict[str, Any]]]:
+    """The saved descriptions for code that only reads them, reused until they change. Never modify it."""
+    return read_json_view(_store_path(lib), {}) or {}
+
+
 def _files(lib, rel: str) -> Optional[Tuple[str, Path, Path]]:
     """(library-relative original path, original, text version) for a file or its .md, inside the library."""
     path = lib.resolve(rel)
@@ -48,7 +54,7 @@ def _files(lib, rel: str) -> Optional[Tuple[str, Path, Path]]:
         return None
     if not original.is_file() or not sidecar.is_file():
         return None
-    return original.relative_to(lib.root.resolve()).as_posix(), original, sidecar
+    return relative_posix(original, lib.root), original, sidecar
 
 
 def visual_units(text: str) -> List[Tuple[str, str]]:
@@ -122,9 +128,11 @@ def apply(text: str, entries: Dict[str, Dict[str, Any]]) -> str:
 
 def current(lib, rel_original: str, original: Path) -> Dict[str, Dict[str, Any]]:
     """Descriptions for a file that still match it (a changed file's old descriptions are set aside)."""
-    entries = load(lib).get(rel_original) or {}
+    entries = load_view(lib).get(rel_original) or {}
+    if not entries:
+        return {}
     try:
-        digest = file_digest(lib.checked(original))
+        digest = lib.digest(lib.checked(original))
     except (OSError, LibraryPathError):
         return {}
     return {u: e for u, e in entries.items() if e.get("sha256") == digest and e.get("text")}
@@ -134,7 +142,7 @@ def reading_text(lib, sidecar: Path, text: str) -> str:
     """Hide obsolete descriptions even before the next sync rewrites a text version."""
     if MARK not in text:
         return text
-    found = _files(lib, sidecar.relative_to(lib.root).as_posix())
+    found = _files(lib, relative_posix(sidecar, lib.root))
     return apply(text, current(lib, found[0], found[1]) if found else {})
 
 
@@ -204,7 +212,7 @@ def _sidecars(lib, course: str = "") -> Iterable[Tuple[str, Path, Path]]:
     root = lib.root
     wanted = (course or "").strip().lower()
     for sidecar in sorted(root.rglob("*.md")):
-        rel = sidecar.relative_to(root).as_posix()
+        rel = relative_posix(sidecar, root)
         parts = rel.split("/")
         if parts[0].startswith(".") or any(p in SKIP_DIRS or p.endswith(".assets") for p in parts[:-1]):
             continue
@@ -215,9 +223,10 @@ def _sidecars(lib, course: str = "") -> Iterable[Tuple[str, Path, Path]]:
             yield found
 
 
+@as_one_action
 def survey(lib, course: str = "", limit: int = 0) -> Dict[str, Any]:
     """How many pictures are worth describing, how many are described, and (with limit) the next ones to do."""
-    store = load(lib)
+    store = load_view(lib)
     total = described = 0
     todo: List[Dict[str, str]] = []
     for rel_original, original, sidecar in _sidecars(lib, course):
@@ -231,7 +240,7 @@ def survey(lib, course: str = "", limit: int = 0) -> Dict[str, Any]:
         if not units:
             continue
         try:
-            digest = file_digest(original)
+            digest = lib.digest(original) if store.get(rel_original) else ""
         except OSError:
             continue
         done = {u for u, e in (store.get(rel_original) or {}).items()
