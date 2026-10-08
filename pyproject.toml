@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "superstudent"
-version = "1.7.0"
+version = "1.7.1"
 description = "Mirror your Canvas courses into a searchable study library for Claude and ChatGPT"
 readme = "README.md"
 requires-python = ">=3.10"

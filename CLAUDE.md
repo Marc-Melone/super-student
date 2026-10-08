@@ -4,7 +4,7 @@ Super Student mirrors a student's Canvas courses into `~/SuperStudent` (the "lib
 study them like someone who studied every slide: everything is converted to text with citable locators
 (`## [Page 12]`, `## [Slide 7] Title`, `## [00:32:10]`), originals are kept for viewing as images, and a connector
 (MCP server) plus skills let the AI search, read, view pages and run a "study pass". It ships as a Mac app
-(non-technical students), a Terminal installer, and a CLI. Owner: Marc. Release version: 1.7.0.
+(non-technical students), a Terminal installer, and a CLI. Owner: Marc. Release version: 1.7.1.
 
 ## Working with Marc
 
@@ -16,7 +16,8 @@ study them like someone who studied every slide: everything is converted to text
 
 ## Status (8 Oct 2026)
 
-- Unreleased fixes on top of 1.7.0, not yet packaged (bump to 1.7.1 and rebuild the Mac download to ship them):
+- 1.7.1 (8 Oct 2026) packages these fixes on top of 1.7.0 (PR #4). Its dependency pins are 1.7.0's, copied
+  into the build unchanged, so only Super Student's own code changed; native Mac launch wasn't re-tested here:
   - Search only reads the index again, so it answers while a sync writes it and no longer re-indexes or
     hashes originals on every search. Hits from documents changed since indexing (including originals whose
     saved picture descriptions no longer match) are checked against the current reading text. Saving a
