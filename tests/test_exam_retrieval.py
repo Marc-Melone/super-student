@@ -9,6 +9,7 @@ import os
 import sys
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 from unittest.mock import patch
 
@@ -16,7 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from superstudent.evidence import recheck_evidence, source_fingerprint, validate_evidence
 from superstudent.index import search, update_index
 from superstudent.library import Library
-from superstudent.util import REMOVED_DIR, file_digest, front_matter
+from superstudent.util import REMOVED_DIR, file_digest, front_matter, parse_front_matter
 
 
 class CourseFixture(unittest.TestCase):
@@ -40,6 +41,13 @@ class CourseFixture(unittest.TestCase):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(front_matter(meta or {"type": "page", "title": path.stem}) + body, encoding="utf-8")
         return path.relative_to(self.lib.root).as_posix()
+
+    def write_extracted(self, name, original_bytes, body):
+        original = self.lib.root / self.folder / name
+        original.parent.mkdir(parents=True, exist_ok=True)
+        original.write_bytes(original_bytes)
+        return self.write(name + ".md", body, meta={"type": "file", "source_file": original.name,
+                                                   "source_sha256": file_digest(original)})
 
 
 class RetrievalTests(CourseFixture):
@@ -200,14 +208,48 @@ class EvidenceTests(CourseFixture):
         self.assertFalse(self.validate()["valid"])
 
     def test_original_and_sidecar_have_same_fingerprint(self):
-        self.path = self.write("Files/lesson.pdf.md", "# Lesson\n\n## [Page 1]\n\nModified duration estimates rate risk.",
-                               meta={"type": "pdf", "source_file": "lesson.pdf"})
-        (self.lib.root / self.path[:-3]).write_bytes(b"ORIGINAL")
+        self.path = self.write_extracted("Files/lesson.pdf", b"ORIGINAL",
+                                         "# Lesson\n\n## [Page 1]\n\nModified duration estimates rate risk.")
         a = source_fingerprint(self.lib, self.path, self.folder)
         b = source_fingerprint(self.lib, self.path[:-3], self.folder)
         self.assertEqual(a, b)
         self.assertEqual(a, source_fingerprint(self.lib, self.path))
         self.assertTrue(self.validate(path=self.path[:-3])["valid"])
+
+    def test_legacy_extraction_without_binding_requires_refresh(self):
+        original = self.lib.root / self.folder / "Files/legacy.pdf"
+        original.write_bytes(b"ORIGINAL")
+        for source_file in (None, original.name):
+            with self.subTest(source_file=source_file):
+                self.path = self.write("Files/legacy.pdf.md",
+                                       "# Lesson\n\n## [Page 1]\n\nModified duration estimates rate risk.",
+                                       meta={"type": "pdf", "source_file": source_file})
+                sidecar = self.lib.root / self.path
+                before = sidecar.read_bytes()
+                result = self.validate()
+                self.assertFalse(result["valid"])
+                self.assertEqual(result["errors"][0]["code"], "unbound_extraction")
+                self.assertIn("Refresh the course", result["errors"][0]["message"])
+                self.assertEqual(sidecar.read_bytes(), before)
+                self.assertEqual(original.read_bytes(), b"ORIGINAL")
+
+    def test_malformed_extraction_binding_is_rejected(self):
+        original = self.lib.root / self.folder / "Files/lesson.pdf"
+        original.write_bytes(b"ORIGINAL")
+        for bound in ("0" * 63, "0" * 65, "g" * 64, "not a hash"):
+            with self.subTest(bound=bound):
+                self.path = self.write("Files/lesson.pdf.md",
+                                       "# Lesson\n\n## [Page 1]\n\nModified duration estimates rate risk.",
+                                       meta={"type": "pdf", "source_file": original.name, "source_sha256": bound})
+                self.assertEqual(self.validate()["errors"][0]["code"], "unbound_extraction")
+
+    def test_adjacent_extensionless_file_also_requires_binding(self):
+        original = self.lib.root / self.path[:-3]
+        original.write_bytes(b"ORIGINAL WITHOUT EXTENSION")
+        self.assertEqual(self.validate()["errors"][0]["code"], "unbound_extraction")
+        self.path = self.write_extracted("Files/lesson", original.read_bytes(),
+                                         "# Lesson\n\n## [Page 1]\n\nModified duration estimates rate risk.")
+        self.assertTrue(self.validate()["valid"])
 
     def test_generated_notes_and_historical_copies_rejected(self):
         for name in ("Study Notes/lesson.md", "_Study/lesson.md", f"{REMOVED_DIR}/lesson.md", "EXAM_INTEL.md", "OUTLINE.md"):
@@ -262,14 +304,37 @@ class EvidenceTests(CourseFixture):
         self.assertEqual(recheck_evidence(self.lib, self.folder, records)["errors"][0]["code"], "changed_source")
 
     def test_recheck_detects_original_change_even_if_quote_unchanged(self):
-        self.path = self.write("Files/source.pdf.md", "# Lesson\n\n## [Page 1]\n\nModified duration estimates rate risk.",
-                               meta={"type": "pdf", "source_file": "source.pdf"})
+        self.path = self.write_extracted("Files/source.pdf", b"FIRST",
+                                         "# Lesson\n\n## [Page 1]\n\nModified duration estimates rate risk.")
         original = self.lib.root / self.path[:-3]
-        original.write_bytes(b"FIRST")
         records = self.saved()
         st = original.stat()
         original.write_bytes(b"OTHER")
         os.utime(original, ns=(st.st_atime_ns, st.st_mtime_ns))
+        self.assertEqual(recheck_evidence(self.lib, self.folder, records)["errors"][0]["code"], "stale_extraction")
+
+    def test_original_change_cannot_generate_new_evidence_from_old_text(self):
+        self.path = self.write_extracted("Files/source.pdf", b"FIRST",
+                                         "# Lesson\n\n## [Page 1]\n\nModified duration estimates rate risk.")
+        self.assertTrue(self.validate()["valid"])
+        (self.lib.root / self.path[:-3]).write_bytes(b"OTHER")
+        result = self.validate()
+        self.assertFalse(result["valid"])
+        self.assertEqual(result["errors"][0]["code"], "stale_extraction")
+        self.assertIn("Refresh the course", result["errors"][0]["message"])
+        with self.assertRaisesRegex(ValueError, "original file changed"):
+            source_fingerprint(self.lib, self.path, self.folder)
+
+    def test_refreshed_extraction_accepts_new_evidence_but_invalidates_old_records(self):
+        self.path = self.write_extracted("Files/source.pdf", b"FIRST",
+                                         "# Lesson\n\n## [Page 1]\n\nModified duration estimates rate risk.")
+        records = self.saved()
+        self.path = self.write_extracted("Files/source.pdf", b"OTHER",
+                                         "# Lesson revised\n\n## [Page 1]\n\nModified duration estimates rate risk.\nNew extracted text.")
+        result = self.validate()
+        self.assertTrue(result["valid"], result)
+        self.assertNotEqual(result["records"][0]["source_fingerprint"], records[0]["source_fingerprint"])
+        self.assertTrue(recheck_evidence(self.lib, self.folder, result["records"])["valid"])
         self.assertEqual(recheck_evidence(self.lib, self.folder, records)["errors"][0]["code"], "changed_source")
 
     def test_recheck_rejects_source_replaced_with_cross_course_symlink(self):
@@ -303,11 +368,153 @@ class EvidenceTests(CourseFixture):
                 self.assertFalse(self.validate(quote=value)["valid"])
 
     def binary_source(self):
-        self.path = self.write("Files/large.pdf.md", "# Lesson\n\n## [Page 1]\n\nModified duration estimates rate risk.\n" + "Long original text. " * 10000,
-                               meta={"type": "pdf", "source_file": "large.pdf"})
+        self.path = self.write_extracted("Files/large.pdf", b"binary-data-" * 10000,
+                                         "# Lesson\n\n## [Page 1]\n\nModified duration estimates rate risk.\n" + "Long original text. " * 10000)
+        return self.lib.root / self.path[:-3]
+
+    def update_metadata(self, **changes):
+        path = self.lib.root / self.path
+        meta, body = parse_front_matter(path.read_text())
+        meta.update(changes)
+        path.write_text(front_matter(meta) + body)
+
+    def archive_source(self, name="lesson.pdf"):
+        archive = self.lib.root / self.folder / "Files/lessons.zip"
+        archive.write_bytes(b"FIRST-ARCHIVE")
+        self.path = self.write_extracted("Files/lessons.zip (unzipped)/" + name, b"ORIGINAL-MEMBER",
+                                         "# Lesson\n\n## [Page 1]\n\nModified duration estimates rate risk.")
+        self.update_metadata(source_archive=archive.relative_to(self.lib.root).as_posix(),
+                             source_archive_sha256=file_digest(archive))
+        return archive
+
+    def test_bound_archive_member_accepts_current_evidence(self):
+        self.archive_source()
+        records = self.saved()
+        self.assertTrue(recheck_evidence(self.lib, self.folder, records)["valid"])
+        self.assertEqual(source_fingerprint(self.lib, self.path[:-3], self.folder), records[0]["source_fingerprint"])
+
+    def test_archive_change_invalidates_cached_and_new_evidence(self):
+        archive = self.archive_source()
+        cache = {}
+        records = validate_evidence(self.lib, self.folder, [self.citation()], source_cache=cache)["records"]
+        self.assertEqual(len(records), 1)
+        old = archive.stat()
+        archive.write_bytes(b"OTHER-ARCHIVE")
+        os.utime(archive, ns=(old.st_atime_ns, old.st_mtime_ns))
+        self.assertEqual(archive.stat().st_size, old.st_size)
+        self.assertEqual(recheck_evidence(self.lib, self.folder, records, source_cache=cache)["errors"][0]["code"], "stale_extraction")
+        self.assertEqual(self.validate()["errors"][0]["code"], "stale_extraction")
+
+    def test_missing_archive_invalidates_cached_evidence(self):
+        archive = self.archive_source()
+        cache = {}
+        records = validate_evidence(self.lib, self.folder, [self.citation()], source_cache=cache)["records"]
+        archive.unlink()
+        result = recheck_evidence(self.lib, self.folder, records, source_cache=cache)
+        self.assertEqual(result["errors"][0]["code"], "missing_archive")
+        self.assertIn("Refresh the course", result["errors"][0]["message"])
+
+    def test_archive_binding_requires_both_relative_path_and_valid_hash(self):
+        archive = self.archive_source()
+        rel = archive.relative_to(self.lib.root).as_posix()
+        for path, bound, code in ((rel, "", "unbound_extraction"), (rel, "g" * 64, "unbound_extraction"),
+                                  ("", file_digest(archive), "unbound_extraction"),
+                                  (str(archive), file_digest(archive), "invalid_path"),
+                                  (self.folder + "/../FinanceXA/Files/lessons.zip", file_digest(archive), "invalid_path")):
+            with self.subTest(path=path, bound=bound):
+                self.update_metadata(source_archive=path, source_archive_sha256=bound)
+                self.assertEqual(self.validate()["errors"][0]["code"], code)
+
+    def test_source_archive_path_and_symlinks_cannot_escape_course(self):
+        archive = self.archive_source()
+        elsewhere = self.lib.root / self.other / "Files/lessons.zip"
+        elsewhere.write_bytes(archive.read_bytes())
+        self.update_metadata(source_archive=elsewhere.relative_to(self.lib.root).as_posix())
+        self.assertEqual(self.validate()["errors"][0]["code"], "outside_course")
+        self.update_metadata(source_archive=archive.relative_to(self.lib.root).as_posix())
+        cache = {}
+        records = validate_evidence(self.lib, self.folder, [self.citation()], source_cache=cache)["records"]
+        self.assertEqual(len(records), 1)
+        archive.unlink()
+        archive.symlink_to(elsewhere)
+        self.assertEqual(recheck_evidence(self.lib, self.folder, records, source_cache=cache)["errors"][0]["code"], "outside_course")
+        archive.unlink()
+        private = self.scratch / "private.zip"
+        private.write_bytes(b"PRIVATE_ARCHIVE_CONTENT")
+        archive.symlink_to(private)
+        with patch("superstudent.evidence.file_digest", wraps=file_digest) as digest:
+            result = self.validate()
+        self.assertEqual(result["errors"][0]["code"], "outside_course")
+        self.assertNotIn("PRIVATE_ARCHIVE_CONTENT", json.dumps(result))
+        self.assertNotIn(private, [call.args[0] for call in digest.call_args_list])
+
+    def test_locked_archive_invalidates_cached_member_evidence(self):
+        self.archive_source()
+        cache = {}
+        records = validate_evidence(self.lib, self.folder, [self.citation()], source_cache=cache)["records"]
+        state = self.lib.load_state()
+        state["courses"]["1"]["items"] = {"file:1": {"path": "Files/lessons.zip", "status": "locked"}}
+        self.lib.save_state(state)
+        self.assertEqual(recheck_evidence(self.lib, self.folder, records, source_cache=cache)["errors"][0]["code"], "unavailable_source")
+
+    def test_operation_cache_hashes_shared_archive_once_for_multiple_members(self):
+        archive = self.archive_source()
+        first = self.citation()
+        self.archive_source("second.pdf")
+        second = self.citation()
+        cache = {}
+        with patch("superstudent.evidence.file_digest", wraps=file_digest) as digest:
+            result = validate_evidence(self.lib, self.folder, [first, second] * 15, source_cache=cache)
+            self.assertTrue(result["valid"], result)
+            self.assertTrue(recheck_evidence(self.lib, self.folder, result["records"], source_cache=cache)["valid"])
+            self.assertEqual(digest.call_count, 3)
+            self.assertEqual(sum(call.args[0] == archive for call in digest.call_args_list), 1)
+
+    def test_freshly_unpacked_archive_requires_new_saved_evidence(self):
+        archive = self.archive_source()
+        records = self.saved()
+        archive.write_bytes(b"OTHER-ARCHIVE")
+        self.update_metadata(source_archive_sha256=file_digest(archive))
+        result = self.validate()
+        self.assertTrue(result["valid"], result)
+        self.assertNotEqual(result["records"][0]["source_fingerprint"], records[0]["source_fingerprint"])
+        self.assertEqual(recheck_evidence(self.lib, self.folder, records)["errors"][0]["code"], "changed_source")
+
+    def test_archive_change_during_hash_is_rejected_and_not_cached(self):
+        archive = self.archive_source()
+        cache = {}
+        def replacing_digest(path):
+            value = file_digest(path)
+            if path == archive:
+                archive.write_bytes(b"OTHER-ARCHIVE")
+            return value
+        with patch("superstudent.evidence.file_digest", side_effect=replacing_digest):
+            result = validate_evidence(self.lib, self.folder, [self.citation()], source_cache=cache)
+        self.assertEqual(result["errors"][0]["code"], "changed_during_read")
+        self.assertFalse(any(key[0] == "source" for key in cache))
+
+    def test_raw_zip_markdown_cannot_bypass_bound_text_after_member_removal(self):
+        archive = self.archive_source("lesson.md")
         original = self.lib.root / self.path[:-3]
-        original.write_bytes(b"binary-data-" * 10000)
-        return original
+        body = "# Lesson\n\n## [Page 1]\n\nModified duration estimates rate risk.\n"
+        original.write_text(body)
+        with zipfile.ZipFile(archive, "w") as bundle:
+            bundle.writestr("lesson.md", body)
+        self.update_metadata(source_sha256=file_digest(original), source_archive_sha256=file_digest(archive))
+        cache = {}
+        raw = self.citation(path=self.path[:-3])
+        converted = self.citation()
+        records = validate_evidence(self.lib, self.folder, [converted], source_cache=cache)["records"]
+        self.assertEqual(len(records), 1)
+        rejected = validate_evidence(self.lib, self.folder, [raw], source_cache=cache)
+        self.assertEqual(rejected["errors"][0]["code"], "unbound_extraction")
+        self.assertIn("converted text version", rejected["errors"][0]["message"])
+        with zipfile.ZipFile(archive, "w") as bundle:
+            bundle.writestr("replacement.md", "A new course file.")
+        self.assertTrue(original.is_file())
+        rejected = validate_evidence(self.lib, self.folder, [raw], source_cache=cache)
+        self.assertEqual(rejected["errors"][0]["code"], "unbound_extraction")
+        self.assertEqual(recheck_evidence(self.lib, self.folder, records, source_cache=cache)["errors"][0]["code"], "stale_extraction")
 
     def test_operation_cache_hashes_shared_original_once_across_helpers(self):
         self.binary_source()
@@ -337,7 +544,7 @@ class EvidenceTests(CourseFixture):
         original.write_bytes(b"Binary-data-" * 10000)
         os.utime(original, ns=(old.st_atime_ns, old.st_mtime_ns))
         result = recheck_evidence(self.lib, self.folder, records, source_cache=cache)
-        self.assertEqual(result["errors"][0]["code"], "changed_source")
+        self.assertEqual(result["errors"][0]["code"], "stale_extraction")
 
     def test_cache_guard_detects_sidecar_change(self):
         cache = {}

@@ -352,6 +352,16 @@ def _question_status(lib, plan, question, source_cache=None):
     return "current", []
 
 
+def _require_current_question(public_plan, question_id):
+    """Honor the final source check before committing a change or returning an answer."""
+    question = _question(public_plan, question_id)
+    if question.get("status") != "current":
+        errors = question.get("status_errors") or ["The cited source is unavailable or changed."]
+        raise ExamError("This question's source changed during the update. Regenerate it before continuing: "
+                        + "; ".join(_messages(errors)))
+    return question
+
+
 def _scope_changes(lib, plan, source_cache=None):
     try:
         cid, _, _, cdir = _course(lib, plan["course_folder"])
@@ -569,6 +579,8 @@ def save_questions(lib, plan_id, questions):
         plan["questions"].extend(added)
         plan["updated_at"] = _iso(_now())
         public = _public(lib, plan, False, source_cache)
+        for question in added:
+            _require_current_question(public, question["id"])
         _save_store(lib, store)
         return {"ok": True, "added": len(added), "skipped_duplicates": skipped,
                 "question_ids": [q["id"] for q in added], "plan": public,
@@ -588,9 +600,10 @@ def reveal_question(lib, plan_id, question_id):
         question["revealed_at"] = _iso(_now())
         plan["updated_at"] = question["revealed_at"]
         public = _public(lib, plan, False, source_cache)
+        current = _require_current_question(public, question_id)
         revealed = copy.deepcopy(question)
         revealed.pop("dedup_key", None)
-        revealed.update(status="current", status_errors=[], evidence_note=EVIDENCE_LABEL)
+        revealed.update(status=current["status"], status_errors=current["status_errors"], evidence_note=EVIDENCE_LABEL)
         _save_store(lib, store)
         return {"ok": True, "question": revealed, "plan": public}
 
@@ -645,6 +658,7 @@ def record_attempt(lib, plan_id, question_id, answer="", choice_index=-1, self_r
         plan["attempts"].append(attempt)
         plan["updated_at"] = attempt["at"]
         public = _public(lib, plan, False, source_cache)
+        _require_current_question(public, question_id)
         _save_store(lib, store)
         return {"ok": True, "attempt": public["attempts"][-1], "plan": public,
                 "feedback": "Your self-rating was saved; it is not automatic marking." if mode == "self_report" else "Correct choice." if correct else "Incorrect choice; review the explanation and cited source."}

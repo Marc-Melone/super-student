@@ -4,8 +4,7 @@ Super Student mirrors a student's Canvas courses into `~/SuperStudent` (the "lib
 study them like someone who studied every slide: everything is converted to text with citable locators
 (`## [Page 12]`, `## [Slide 7] Title`, `## [00:32:10]`), originals are kept for viewing as images, and a connector
 (MCP server) plus skills let the AI search, read, view pages and run a "study pass". It ships as a Mac app
-(non-technical students), a Terminal installer, and a CLI. Owner: Marc. Development preview: 1.7.0;
-published release: 1.6.1 until the exam-preparation change is merged and released.
+(non-technical students), a Terminal installer, and a CLI. Owner: Marc. Release version: 1.7.0.
 
 ## Working with Marc
 
@@ -15,7 +14,7 @@ published release: 1.6.1 until the exam-preparation change is merged and release
 - Suggested effort: `high` for normal work on this codebase, `xhigh` for long unattended builds, `max` for
   independent reviews (especially anything touching the Canvas token).
 
-## Status (5 Oct 2026)
+## Status (8 Oct 2026)
 
 - 1.7.0 adds a course/module exam workspace, connector-generated source-cited practice, in-app multiple
   choice and self-assessed written answers, saved attempts, spaced review priorities, and source-reference
@@ -28,6 +27,13 @@ published release: 1.6.1 until the exam-preparation change is merged and release
   been completed.
 - Note coverage now means current page/slide references, rather than claiming a document was understood.
   Exam data is local under `.superstudent/exams.json`, bounded, atomically saved and separately locked.
+- Extracted text now records the original-file SHA-256 captured during conversion; ZIP members also track
+  their container. Old unbound text is rebuilt on the next sync before it can support exam practice.
+  Final source checks must pass before questions, reveals or scored attempts are committed.
+- The final packaged 1.7.0 runtime passed 561 automated checks (one optional LibreOffice check skipped),
+  22 package/launcher checks, and independent reviews of source scope, freshness, storage and packaging.
+  Validation used temporary profiles and synthetic course material. Native Mac windows, Gatekeeper,
+  Intel execution, older macOS, and real Canvas integration remain unverified.
 - During this environment's checks, launching installed LibreOffice crashed. Keep
   `SUPERSTUDENT_NO_SOFFICE=1` for sandbox tests; the built-in slide renderer is tested. Do not launch
   LibreOffice again in this chat. Native Apple Vision and native Mac windows remain unverified here.
@@ -159,9 +165,10 @@ python tests/test_study.py          # 59
 python tests/test_gui.py            # 67 (app server; SUPERSTUDENT_APP_DRYRUN)
 python tests/test_openai.py         # 18 (needs the Codex CLI on PATH for the live part)
 python tests/test_high_priority.py  # 35 security and source-freshness regressions
-python tests/test_exam_retrieval.py # 45 retrieval and source-evidence checks
-python tests/test_exams.py          # 40 exam state, scoring, scope, freshness and storage checks
+python tests/test_exam_retrieval.py # 60 retrieval and source-evidence checks
+python tests/test_exams.py          # 43 exam state, scoring, scope, freshness and storage checks
 python tests/test_exam_workflow.py  # 3 real HTTP/MCP workflow tests, each with multiple assertions
+python tests/test_extraction_evidence.py # 23 extraction binding, ZIP and recording refresh regressions
 python benchmarks/exam_retrieval.py --require-improvement
 python tests/gui_demo.py            # click through the app against the fake Canvas (token: test-token-123-padding-to-look-real)
 python mac/build_app.py             # dist/Super Student.app and dist/SuperStudent-<version>-mac.zip

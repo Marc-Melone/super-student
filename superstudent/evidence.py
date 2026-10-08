@@ -2,8 +2,9 @@
 
 This establishes that a quoted passage exists at a precise source locator. It does not establish that an
 answer follows from that passage, or that a model-generated explanation is correct. Generated study notes
-and visual descriptions cannot serve as original evidence. Source hashes include the text, its adjacent
-original when present, and known availability/version, so saved practice is invalidated by source changes.
+and visual descriptions cannot serve as original evidence. Extracted text must be bound to the original
+bytes used for extraction. Source hashes include the text, its adjacent original when present, and known
+availability/version, so saved practice is invalidated by source changes.
 """
 
 from __future__ import annotations
@@ -48,6 +49,21 @@ def _stamp(lib, path: Path) -> tuple:
     except FileNotFoundError:
         return (str(checked), None)
     return (str(checked), st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns)
+
+
+def _digest(lib, path: Path, source_cache=None) -> str:
+    """Share a guarded digest when several sources came from the same archive."""
+    signature = _stamp(lib, path)
+    key = ("digest", str(lib.root), str(path))
+    cached = source_cache.get(key) if source_cache is not None else None
+    if cached and cached["signature"] == signature:
+        return cached["digest"]
+    digest = file_digest(lib.checked(path))
+    if _stamp(lib, path) != signature:
+        raise EvidenceError("changed_during_read", "The source changed during verification; retry using the latest course text.")
+    if source_cache is not None:
+        source_cache[key] = {"signature": signature, "digest": digest}
+    return digest
 
 
 def _state(lib, source_cache=None) -> Dict[str, Any]:
@@ -99,6 +115,7 @@ def _source(lib, course_folder: str, value: str, source_cache=None) -> Dict[str,
     parts = target.relative_to(directory).parts
     if any(p in EXCLUDED_PARTS or p.startswith(".") or p.endswith(".assets") for p in parts) or target.name in GENERATED:
         raise EvidenceError("generated_source", "Use original course material rather than notes, summaries or historical copies.")
+    unpacked = any(p.endswith(" (unzipped)") for p in supplied_parts[:-1] + parts[:-1])
     try:
         original_path = target.with_name(target.name[:-3])
         original = lib.checked(original_path)
@@ -107,13 +124,18 @@ def _source(lib, course_folder: str, value: str, source_cache=None) -> Dict[str,
         signature = (_stamp(lib, target), _stamp(lib, original_path), _stamp(lib, lib.state_path))
         cache_key = ("source", str(lib.root), course_folder, canonical)
         cached = source_cache.get(cache_key) if source_cache is not None else None
-        if cached and cached["signature"] == signature:
-            return cached["source"]
+        if cached and cached["signature"][:3] == signature and (not unpacked or cached.get("archive_path") is not None):
+            archive_path = cached.get("archive_path")
+            archive_stamp = (_stamp(lib, archive_path),) if archive_path is not None else ()
+            if cached["signature"] == signature + archive_stamp:
+                return cached["source"]
         raw = target.read_text(encoding="utf-8")
         meta, body = parse_front_matter(raw)
         if (meta.get("type") or "").lower() in EXCLUDED_TYPES:
             raise EvidenceError("generated_source", "A generated summary cannot serve as original evidence.")
-        has_original = bool(original.suffix and original.is_file())
+        if unpacked and not (meta.get("source_archive") and meta.get("source_archive_sha256")):
+            raise EvidenceError("unbound_extraction", "This unpacked file has no verified link to its source archive. Use its converted text version, or refresh the course to unpack it again before using this evidence.")
+        has_original = original.is_file()
         if meta.get("source_file") and not has_original:
             raise EvidenceError("missing_original", "The original file is missing; refresh the course before using this evidence.")
         status = material_status(lib, canonical, state=_state(lib, source_cache))
@@ -121,12 +143,53 @@ def _source(lib, course_folder: str, value: str, source_cache=None) -> Dict[str,
             raise EvidenceError("unavailable_source", status["message"] or "The course source is not current.")
         if re.search(r"^_(?:Not downloaded|Download failed|Couldn't extract text)\b", body, re.M):
             raise EvidenceError("unavailable_source", "The source has no usable original text; refresh it first.")
+        original_digest = ""
+        if has_original:
+            bound_digest = meta.get("source_sha256") or ""
+            if not re.fullmatch(r"[0-9a-fA-F]{64}", bound_digest):
+                raise EvidenceError("unbound_extraction", "The extracted text was not verified against its original file. Refresh the course to rebuild the text before using this evidence.")
+            original_digest = _digest(lib, original, source_cache)
+            if bound_digest.lower() != original_digest:
+                raise EvidenceError("stale_extraction", "The original file changed after this text was extracted. Refresh the course to rebuild the text before using this evidence.")
+        archive_path = None
+        archive_digest = ""
+        archive_status = {}
+        if meta.get("source_archive") or meta.get("source_archive_sha256"):
+            archive_rel = _relative(meta.get("source_archive"))
+            archive_path = lib.root / archive_rel
+            if not _within(archive_path, lib.root / course_folder):
+                raise EvidenceError("outside_course", "The source archive must belong to the selected course.")
+            if any(p in EXCLUDED_PARTS or p.startswith(".") or p.endswith(".assets") for p in archive_path.relative_to(directory).parts):
+                raise EvidenceError("generated_source", "Use a current original archive rather than notes or historical copies.")
+            archive = lib.checked(archive_path)
+            if not _within(archive, directory):
+                raise EvidenceError("outside_course", "The source archive resolves outside the selected course.")
+            if any(p in EXCLUDED_PARTS or p.startswith(".") or p.endswith(".assets") for p in archive.relative_to(directory).parts):
+                raise EvidenceError("generated_source", "Use a current original archive rather than notes or historical copies.")
+            if not archive.is_file():
+                raise EvidenceError("missing_archive", "The source archive is missing. Refresh the course to restore and unpack it before using this evidence.")
+            bound_archive = meta.get("source_archive_sha256") or ""
+            if not re.fullmatch(r"[0-9a-fA-F]{64}", bound_archive):
+                raise EvidenceError("unbound_extraction", "The extracted file was not verified against its source archive. Refresh the course to unpack it again before using this evidence.")
+            archive_stamp = _stamp(lib, archive_path)
+            if archive_stamp[0] != str(archive):
+                raise EvidenceError("changed_during_read", "The source archive changed during verification; retry using the latest course text.")
+            signature += (archive_stamp,)
+            archive_status = material_status(lib, archive_rel, state=_state(lib, source_cache))
+            if archive_status["status"] != "current" or archive_status["stale"]:
+                raise EvidenceError("unavailable_source", archive_status["message"] or "The source archive is not current.")
+            archive_digest = _digest(lib, archive, source_cache)
+            if bound_archive.lower() != archive_digest:
+                raise EvidenceError("stale_extraction", "The source archive changed after this file was unpacked. Refresh the course to unpack it again before using this evidence.")
         # Hash raw text, rather than notes.fingerprint's deduplication view: changed headings/locators must
         # invalidate saved evidence too. An original may change without a sidecar mtime or size change.
         digests = {"path": canonical, "text": hashlib.sha256(raw.encode("utf-8")).hexdigest(),
                    "original_path": original.relative_to(lib.root).as_posix() if has_original else "",
-                   "original": file_digest(original) if has_original else "",
+                   "original": original_digest,
                    "status": status["status"], "version": status["last_successful_version"]}
+        if archive_path is not None:
+            digests.update(archive_path=archive_rel, archive=archive_digest,
+                           archive_status=archive_status["status"], archive_version=archive_status["last_successful_version"])
         fingerprint = hashlib.sha256(json.dumps(digests, sort_keys=True).encode("utf-8")).hexdigest()
         sections = _split_sections(strip_blocks(body))
         names = unique_locators([name for name, _, _ in sections])
@@ -136,10 +199,12 @@ def _source(lib, course_folder: str, value: str, source_cache=None) -> Dict[str,
         source = {"path": canonical, "sections": sections, "names": names, "locators": locators,
                   "source_fingerprint": fingerprint, "source_status": status["status"]}
         after = (_stamp(lib, target), _stamp(lib, original_path), _stamp(lib, lib.state_path))
+        if archive_path is not None:
+            after += (_stamp(lib, archive_path),)
         if after != signature:
             raise EvidenceError("changed_during_read", "The source changed during verification; retry using the latest course text.")
         if source_cache is not None:
-            source_cache[cache_key] = {"signature": signature, "source": source}
+            source_cache[cache_key] = {"signature": signature, "archive_path": archive_path, "source": source}
     except LibraryPathError as exc:
         raise EvidenceError("outside_course", "The source resolves outside the library.") from exc
     except (OSError, UnicodeDecodeError) as exc:
@@ -153,7 +218,8 @@ def source_fingerprint(lib, path: str, course_folder: str = "", source_cache: Op
     Pass the exact course folder when available. Otherwise the path must belong to exactly one registered
     course. Both an original filename and its Markdown text filename produce the same fingerprint. Pass a
     fresh ``source_cache={}`` for a single operation to hash/read shared sources once; never persist it.
-    Cache entries are guarded by file identity, size, mtime and ctime, plus the current sync-state file.
+    Cache entries are guarded by file identity, size, mtime and ctime, plus the current sync-state file
+    and any source archive recorded when the original was unpacked.
     """
     if not course_folder:
         rel = _relative(path)

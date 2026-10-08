@@ -18,6 +18,7 @@ from unittest.mock import patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from superstudent import exams
 from superstudent.library import Library
+from superstudent.util import file_digest, front_matter
 
 
 class ExamTests(unittest.TestCase):
@@ -283,6 +284,67 @@ class ExamTests(unittest.TestCase):
         self.assertEqual(len(regenerated["plan"]["attempts"]), 1)
         self.assertEqual([q["status"] for q in regenerated["plan"]["questions"]], ["stale", "current"])
 
+    def test_source_change_during_reveal_returns_no_answer_and_preserves_store(self):
+        plan_id, qid = self.saved()
+        store = self.lib.meta / "exams.json"
+        before = store.read_bytes()
+        real_public = exams._public
+
+        def update_source_then_check(*args, **kwargs):
+            self.source.write_text(self.source.read_text() + "\nNew instructor example.\n")
+            return real_public(*args, **kwargs)
+
+        with patch.object(exams, "_public", side_effect=update_source_then_check):
+            result = exams.reveal_question(self.lib, plan_id, qid)
+        self.assertFalse(result["ok"], result)
+        self.assertNotIn("question", result)
+        self.assertNotIn("EXPECTED_", json.dumps(result))
+        self.assertEqual(store.read_bytes(), before)
+        self.assertFalse(exams.get_plan(self.lib, plan_id)["plan"]["questions"][0]["revealed"])
+
+    def test_source_change_during_attempt_does_not_commit_score_or_review_date(self):
+        source_text = self.source.read_text()
+        real_public = exams._public
+        for typ in ("mcq", "short_answer"):
+            with self.subTest(type=typ):
+                self.source.write_text(source_text)
+                plan_id, qid = self.saved(question=self.question(type=typ))
+                kwargs = {"choice_index": 0}
+                if typ == "short_answer":
+                    self.assertTrue(exams.reveal_question(self.lib, plan_id, qid)["ok"])
+                    kwargs = {"answer": "My explanation", "self_rating": "good"}
+                store = self.lib.meta / "exams.json"
+                before = store.read_bytes()
+
+                def update_source_then_check(*args, **kwargs):
+                    self.source.write_text(source_text + "\nNew instructor example.\n")
+                    return real_public(*args, **kwargs)
+
+                with patch.object(exams, "_public", side_effect=update_source_then_check):
+                    result = exams.record_attempt(self.lib, plan_id, qid, **kwargs)
+                self.assertFalse(result["ok"], result)
+                self.assertNotIn("attempt", result)
+                self.assertNotIn("feedback", result)
+                self.assertEqual(store.read_bytes(), before)
+
+    def test_source_change_during_question_batch_does_not_save_any_questions(self):
+        plan = self.plan()
+        store = self.lib.meta / "exams.json"
+        before = store.read_bytes()
+        other = self.question(prompt="What does diversification reduce?", citations=[{
+            "path": self.path2, "locator": "Page 1", "quote": "Diversification reduces firm-specific risk."}])
+        real_public = exams._public
+
+        def update_source_then_check(*args, **kwargs):
+            self.source.write_text(self.source.read_text() + "\nNew instructor example.\n")
+            return real_public(*args, **kwargs)
+
+        with patch.object(exams, "_public", side_effect=update_source_then_check):
+            result = exams.save_questions(self.lib, plan["id"], [self.question(), other])
+        self.assertFalse(result["ok"], result)
+        self.assertNotIn("question_ids", result)
+        self.assertEqual(store.read_bytes(), before)
+
     def test_source_deletion_invalidates_question(self):
         plan_id, qid = self.saved()
         self.source.unlink()
@@ -302,7 +364,8 @@ class ExamTests(unittest.TestCase):
         original = self.source.with_name("lecture.pdf")
         original.write_bytes(b"first version")
         sidecar = original.with_name(original.name + ".md")
-        sidecar.write_text(self.source.read_text())
+        sidecar.write_text(front_matter({"source_file": original.name, "source_sha256": file_digest(original)})
+                           + self.source.read_text())
         path = sidecar.relative_to(self.lib.root).as_posix()
         question = self.question(citations=[{"path": path, "locator": "Page 1", "quote": "Discounting"}])
         plan_id, qid = self.saved(question=question)
@@ -314,7 +377,8 @@ class ExamTests(unittest.TestCase):
         original = self.source.with_name("lecture.pdf")
         original.write_bytes(b"first version")
         sidecar = original.with_name(original.name + ".md")
-        sidecar.write_text(self.source.read_text())
+        sidecar.write_text(front_matter({"source_file": original.name, "source_sha256": file_digest(original)})
+                           + self.source.read_text())
         path = sidecar.relative_to(self.lib.root).as_posix()
         plan = self.plan()
         q = self.question(citations=[{"path": path, "locator": "Page 1", "quote": "Discounting"}])
