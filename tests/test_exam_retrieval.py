@@ -589,5 +589,91 @@ class EvidenceTests(CourseFixture):
         self.assertFalse(any(key[0] == "source" for key in cache))
 
 
+class SearchDuringUpdatesTests(CourseFixture):
+    """Search only reads the index: a sync writing it at the same time must not make it wait or fail."""
+
+    def sync_writing_index(self):
+        import sqlite3
+        writer = sqlite3.connect(str(self.lib.index_path), timeout=1)
+        writer.execute("BEGIN IMMEDIATE")          # what a sync holds while it indexes changed text
+        self.addCleanup(writer.close)
+        self.addCleanup(writer.rollback)
+        return writer
+
+    def picture(self, name="Files/diagram.png"):
+        from PIL import Image
+        original = self.lib.root / self.folder / name
+        original.parent.mkdir(parents=True, exist_ok=True)
+        Image.new("RGB", (8, 8), "white").save(original)
+        self.write(name + ".md", "# Diagram\n\n## [Image]\n> Visual content: figure or picture. View it directly.\n\nAxis labels.\n",
+                   meta={"type": "image", "source_file": original.name, "source_sha256": file_digest(original)})
+        return original
+
+    def test_search_answers_while_a_sync_writes_the_index(self):
+        import time
+        from superstudent import describe
+        rel = self.write("Files/risk.md", "# Risk\n\n## Duration\n\nDuration measures rate risk.")
+        original = self.picture()
+        self.assertTrue(describe.save(self.lib, original.relative_to(self.lib.root).as_posix(), "Image",
+                                      "A line chart of bond prices against yields, labeled convexity.")["ok"])
+        update_index(self.lib)
+        self.sync_writing_index()
+        (self.lib.root / rel).write_text((self.lib.root / rel).read_text() + "\nUpdated during the sync.\n")
+        started = time.monotonic()
+        hits = search(self.lib, "duration", course=self.folder)
+        self.assertLess(time.monotonic() - started, 3)
+        self.assertEqual([h["path"] for h in hits], [rel])
+
+    def test_saving_a_picture_description_does_not_wait_for_a_sync(self):
+        import time
+        from superstudent import describe
+        original = self.picture()
+        update_index(self.lib)
+        self.sync_writing_index()
+        started = time.monotonic()
+        saved = describe.save(self.lib, original.relative_to(self.lib.root).as_posix(), "Image",
+                              "A supply and demand diagram with the equilibrium price labeled.")
+        self.assertTrue(saved["ok"], saved)
+        self.assertLess(time.monotonic() - started, 10)
+
+    def test_search_leaves_the_index_unchanged_and_reads_current_text(self):
+        import sqlite3
+        rel = self.write("Files/risk.md", "# Risk\n\n## Convexity\n\nConvexity measures curvature.")
+        update_index(self.lib)
+        db = sqlite3.connect(str(self.lib.index_path))
+        before = db.execute("SELECT mtime, size FROM docs WHERE path = ?", (rel,)).fetchone()
+        (self.lib.root / rel).write_text(front_matter({"type": "page", "title": "risk"}) +
+                                         "# Risk\n\n## Convexity\n\nConvexity measures how duration itself changes.")
+        self.assertEqual(search(self.lib, "curvature", course=self.folder), [])
+        hits = search(self.lib, "convexity", course=self.folder)
+        self.assertEqual(len(hits), 1)
+        self.assertIn("duration itself changes", hits[0]["snippet"])
+        self.assertEqual(db.execute("SELECT mtime, size FROM docs WHERE path = ?", (rel,)).fetchone(), before)
+        db.close()
+
+    def test_unchanged_described_original_is_not_reread_on_every_search(self):
+        from superstudent import describe
+        original = self.picture()
+        self.assertTrue(describe.save(self.lib, original.relative_to(self.lib.root).as_posix(), "Image",
+                                      "A scatter plot of risk against return with the efficient frontier.")["ok"])
+        update_index(self.lib)
+        self.assertTrue(search(self.lib, "efficient frontier"))
+        with patch("superstudent.util.file_digest", side_effect=AssertionError("original reread")):
+            self.assertTrue(search(self.lib, "efficient frontier"))
+            update_index(self.lib)
+
+    def test_changed_described_original_hides_its_old_description(self):
+        from superstudent import describe
+        original = self.picture()
+        self.assertTrue(describe.save(self.lib, original.relative_to(self.lib.root).as_posix(), "Image",
+                                      "An obsolete chart of purple anatomy labels.")["ok"])
+        update_index(self.lib)
+        self.assertTrue(search(self.lib, "purple anatomy"))
+        from PIL import Image
+        Image.new("RGB", (8, 8), "black").save(original)       # same size on disk is not required here
+        self.assertEqual(search(self.lib, "purple anatomy"), [])
+        self.assertTrue(search(self.lib, "axis labels"))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

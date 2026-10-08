@@ -37,7 +37,7 @@ from urllib.parse import quote, unquote
 
 from .canvas import AuthError, Canvas, CanvasError, DownloadError, ForbiddenError, NotFoundError
 from .content import TOKEN_RE, YOUTUBE_RE, Refs, block_editor_html, html_text, html_to_markdown, platform_name
-from . import describe, notes
+from . import describe, exams, notes
 from .extract import EXTRACTOR_VERSION, MEDIA_EXT, extract, kind_of
 from .library import Library
 from .media import (Segment, Transcriber, TranscriberUnavailable, extract_keyframes, fmt_ts, media_duration, parse_captions,
@@ -338,6 +338,10 @@ class CourseSync:
                 notes.move(self.s.lib, lib_old + ".md", lib_new + ".md")
         except Exception as exc:          # bookkeeping only; never stop a sync over it
             self.s.lib.log(f"couldn't move notes/descriptions for {lib_old}: {exc}")
+        try:
+            exams.move(self.s.lib, lib_old, lib_new)     # exam practice citing it follows it too
+        except Exception as exc:
+            self.s.lib.log(f"couldn't move exam practice for {lib_old}: {exc}")
         self._prune(self.dir / prev)
 
     def _prune(self, path: Path) -> None:

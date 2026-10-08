@@ -57,6 +57,14 @@ saved AI answer key; written answers show a worked answer for your own assessmen
 rise to the top, with saved attempts and a simple spaced review schedule. Changed, removed or restricted
 sources disable affected practice until new questions are generated. Your library stays local.
 
+A workspace follows its modules as the course changes. Material added to them later can be practiced right
+away, and a renamed, reordered or inserted module doesn't change what you selected or lose your practice.
+The workspace lists sources added, changed or removed since you last reviewed them; **Mark sources as
+reviewed** clears the list once you've looked. A picture description saved later doesn't count as a change.
+**Remove** takes out a question whose answer key or wording looks wrong, with its attempts, and **Delete
+workspace** removes a workspace you no longer need. A multiple-choice question is rejected when its written
+answer names a different choice than its answer key, which catches a miscounted key.
+
 Extracted text is tied to the exact original file used during conversion. Older extracted files need one
 update to establish that link. A changed original or source ZIP blocks its previous text from supplying
 new practice until conversion completes again.
@@ -401,9 +409,10 @@ access token in Canvas (Account → Settings → Approved Integrations).
   safe download staging, stale/restricted sources, interrupted syncs, content hashes and derived-note freshness.
   It uses temporary libraries, dummy credentials and local test servers; it never contacts a real Canvas account.
 - `python tests/test_exam_retrieval.py` checks alternate-query search, exact course boundaries, source quotations,
-  unique locators, fingerprints, and evidence-cache invalidation.
+  unique locators, fingerprints, evidence-cache invalidation, and that search answers while a sync is writing
+  the index.
 - `python tests/test_exams.py` checks exam scope, hidden answers, scoring, self-assessment, scheduled review,
-  stale sources, and safe local storage.
+  stale sources, safe local storage, workspaces following course changes, removal, and answer-key checks.
 - `python tests/test_exam_workflow.py` checks the exam workflow through the real local HTTP and MCP interfaces.
 - `python tests/test_extraction_evidence.py` checks conversion provenance, unchanged-timestamp edits, ZIP
   member refresh and recording refresh using temporary files and mocked downloads/transcription.

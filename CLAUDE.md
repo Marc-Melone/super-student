@@ -16,6 +16,19 @@ study them like someone who studied every slide: everything is converted to text
 
 ## Status (8 Oct 2026)
 
+- Unreleased fixes on top of 1.7.0, not yet packaged (bump to 1.7.1 and rebuild the Mac download to ship them):
+  - Search only reads the index again, so it answers while a sync writes it and no longer re-indexes or
+    hashes originals on every search. Hits from documents changed since indexing (including originals whose
+    saved picture descriptions no longer match) are checked against the current reading text. Saving a
+    picture description or study notes skips the index refresh if a sync is writing (`update_index(wait=2)`).
+  - Exam workspaces follow the course: selected modules are kept by Canvas id; material added to them can
+    be practiced at once; sync carries citations along when it moves files (`exams.move` in `_move_files`);
+    source fingerprints leave out paths, front matter and saved picture descriptions (1.7.0 fingerprints are
+    still accepted while unchanged and upgraded on the next write). Source changes since the last review are
+    listed specifically and cleared with `review_scope`. Workspaces can be deleted (`delete_plan`) and
+    questions removed (`remove_questions`, connector tool `remove_exam_questions`).
+  - Multiple-choice keys are checked: a question is rejected when its answer names or plainly reads like a
+    different choice than `correct_index`.
 - 1.7.0 adds a course/module exam workspace, connector-generated source-cited practice, in-app multiple
   choice and self-assessed written answers, saved attempts, spaced review priorities, and source-reference
   coverage. Scope remains student-selected and unconfirmed. Changed/unavailable sources disable affected
@@ -123,14 +136,15 @@ Estimates are Claude working time.
     - `omml.py` (equations), `slide_render.py` (draws slides without LibreOffice)
     - `content.py`: Canvas HTML to Markdown, plus link tokens like `(canvas-file:123)`
   - **AI layer**
-    - `mcp_server.py`, the connector, has 16 tools including exam preparation and evidence checks.
+    - `mcp_server.py`, the connector, has 17 tools including exam preparation and evidence checks.
     - `index.py` is SQLite FTS5: headings are indexed, the title is indexed once per document, and repeated
       headings get numbered locators.
     - `compact.py`, `render.py` (view_page), `outline.py` (OUTLINE.md and study scope)
     - `notes.py` (study pass), `describe.py` (picture descriptions), `overview.py` (COURSE_OVERVIEW, EXAM_INTEL…)
     - `packs.py`, `guides.py` (SKILL.md, CLAUDE.md and AGENTS.md written into the library)
     - `evidence.py` (exact original-source quote checks and fingerprints with a per-operation cache)
-    - `exams.py` (course/module inventory, practice, local attempt history and review scheduling)
+    - `exams.py` (course/module inventory that follows course changes, practice, local attempt history,
+      review scheduling, answer-key checks)
   - **App**
     - `gui/app.py` and `gui/index.html`: local server on 127.0.0.1 with a session token, Host check, CSP and
       JSON-only POSTs.
@@ -165,10 +179,10 @@ python tests/test_study.py          # 59
 python tests/test_gui.py            # 67 (app server; SUPERSTUDENT_APP_DRYRUN)
 python tests/test_openai.py         # 18 (needs the Codex CLI on PATH for the live part)
 python tests/test_high_priority.py  # 35 security and source-freshness regressions
-python tests/test_exam_retrieval.py # 60 retrieval and source-evidence checks
-python tests/test_exams.py          # 43 exam state, scoring, scope, freshness and storage checks
-python tests/test_exam_workflow.py  # 3 real HTTP/MCP workflow tests, each with multiple assertions
-python tests/test_extraction_evidence.py # 23 extraction binding, ZIP and recording refresh regressions
+python tests/test_exam_retrieval.py # 65 retrieval, source-evidence and search-during-sync checks
+python tests/test_exams.py          # 51 exam state, scoring, scope, freshness, storage and answer-key checks
+python tests/test_exam_workflow.py  # 4 real HTTP/MCP workflow tests, each with multiple assertions
+python tests/test_extraction_evidence.py # 24 extraction binding, ZIP, recording refresh and moved-file regressions
 python benchmarks/exam_retrieval.py --require-improvement
 python tests/gui_demo.py            # click through the app against the fake Canvas (token: test-token-123-padding-to-look-real)
 python mac/build_app.py             # dist/Super Student.app and dist/SuperStudent-<version>-mac.zip

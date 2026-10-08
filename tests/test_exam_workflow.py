@@ -81,6 +81,28 @@ class ExamWorkflow(unittest.TestCase):
         self.assertIn("regeneration", stale["message"])
         self.assertFalse(self.post("/api/exam/reveal", plan_id=pid, question_id=qid)["ok"])
 
+    def test_http_review_remove_and_delete(self):
+        plan = self.post("/api/exam/create", course=self.folder, title="Final", modules=[1])
+        self.assertTrue(plan["ok"], plan)
+        pid = plan["plan"]["id"]
+        qid = exams.save_questions(self.lib, pid, [self.question()])["question_ids"][0]
+        atomic_write_text(self.lib.root / self.folder / "Modules/01 - Valuation/Added.md",
+                          front_matter({"title": "Added", "type": "page"}) + "# Added\n\n## [Page 1]\nPayback ignores timing.\n")
+        changed = self.get("/api/exam", id=pid)["plan"]
+        self.assertTrue(changed["scope_changed"])
+        self.assertEqual([r["title"] for r in changed["scope_changes"]["added"]], ["Added"])
+        for route, body in (("/api/exam/review-scope", {"plan_id": pid}), ("/api/exam/delete", {"plan_id": pid}),
+                            ("/api/exam/remove-questions", {"plan_id": pid, "question_ids": [qid]})):
+            self.assertEqual(requests.post(self.base + route, json=body, timeout=10).status_code, 403)
+        reviewed = self.post("/api/exam/review-scope", plan_id=pid)
+        self.assertTrue(reviewed["ok"], reviewed)
+        self.assertFalse(reviewed["plan"]["scope_changed"])
+        self.assertFalse(self.post("/api/exam/remove-questions", plan_id=pid, question_ids=[])["ok"])
+        removed = self.post("/api/exam/remove-questions", plan_id=pid, question_ids=[qid])
+        self.assertEqual((removed["removed"], removed["question_count"]), (1, 0))
+        self.assertTrue(self.post("/api/exam/delete", plan_id=pid)["ok"])
+        self.assertEqual(self.get("/api/exams", course=self.folder)["plans"], [])
+
     def test_bad_input_returns_actionable_message(self):
         bad = self.post("/api/exam/create", course=self.folder, title="Midterm", modules=[999])
         self.assertFalse(bad["ok"])
@@ -99,7 +121,8 @@ class ExamWorkflow(unittest.TestCase):
                 async with ClientSession(read, write) as session:
                     await session.initialize()
                     names = {t.name for t in (await session.list_tools()).tools}
-                    self.assertTrue({"exam_plans", "create_exam_plan", "check_source_evidence", "save_exam_questions"} <= names)
+                    self.assertTrue({"exam_plans", "create_exam_plan", "check_source_evidence", "save_exam_questions",
+                                     "remove_exam_questions"} <= names)
                     async def call(name, args):
                         response = await session.call_tool(name, args)
                         self.assertFalse(getattr(response, "isError", getattr(response, "is_error", False)), response)
@@ -122,6 +145,8 @@ class ExamWorkflow(unittest.TestCase):
                     response = await session.call_tool("search_course_materials", {"query": "investment valuation", "course": self.folder,
                                                                                   "alternate_queries": ["net present value"]})
                     self.assertIn("Page 1", response.content[0].text)
+                    removed = await call("remove_exam_questions", {"plan_id": pid, "question_ids": saved["question_ids"]})
+                    self.assertEqual((removed["removed"], removed["question_count"]), (1, 0))
         asyncio.run(run())
 
 

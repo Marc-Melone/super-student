@@ -107,10 +107,10 @@ def build_server():
     except TypeError:
         server = Server("superstudent")
 
-    def tool(read_only: bool = True, open_world: bool = False):
+    def tool(read_only: bool = True, open_world: bool = False, destructive: bool = False):
         kwargs: dict = {}
         if ToolAnnotations is not None:
-            kwargs["annotations"] = ToolAnnotations(readOnlyHint=read_only, destructiveHint=False,
+            kwargs["annotations"] = ToolAnnotations(readOnlyHint=read_only, destructiveHint=destructive,
                                                     openWorldHint=open_world)
         # Plain text results only: some clients would otherwise get every answer twice (text plus a JSON copy).
         for attempt in ({**kwargs, "structured_output": False}, kwargs, {}):
@@ -374,9 +374,11 @@ def build_server():
 
     @tool()
     def exam_plans(course: str = "", plan_id: str = "") -> str:
-        """List saved exam workspaces, or read one with its source inventory, questions and review priorities.
-        Scope is selected by the student and needs checking against instructor announcements. Quiz accuracy
-        and self-assessed review are separate; neither is a mastery prediction."""
+        """List saved exam workspaces, or read one with its current sources, questions and review priorities.
+        A workspace follows its selected modules as the course changes; scope_changes lists sources added,
+        changed or removed since the student last reviewed them. Scope is selected by the student and needs
+        checking against instructor announcements. Quiz accuracy and self-assessed review are separate;
+        neither is a mastery prediction."""
         from . import exams
         result = exams.get_plan(_lib(), plan_id) if plan_id else exams.list_plans(_lib(), course)
         return PREFIX + json.dumps(result, ensure_ascii=False)
@@ -412,12 +414,22 @@ def build_server():
         """Add source-cited practice to a saved exam workspace. Read originals and check images first.
         Each question: topic, prompt, type (mcq|short_answer), answer, explanation, difficulty
         (recall|application|transfer), citations [{path,locator,quote}]. MCQ also choices and correct_index
-        (zero based). Exact quotes must support the answer and lie within selected sources. Explain distractors
-        and common mistakes using instructor notation. Use readable plain text and Unicode formulas in fields.
+        (zero based); its answer restates the correct choice (checked against correct_index), and why the
+        other choices fail goes in the explanation. Exact quotes must support the answer and lie within the
+        workspace's current sources. Explain distractors and common mistakes using instructor notation. Use
+        readable plain text and Unicode formulas in fields.
         Mix recall, worked applications and unfamiliar problems.
         The app verifies quote location/freshness, not reasoning correctness. Never label AI practice official."""
         from .exams import save_questions
         return json.dumps(save_questions(_lib(), plan_id, questions), ensure_ascii=False)
+
+    @tool(read_only=False, destructive=True)
+    def remove_exam_questions(plan_id: str, question_ids: List[str]) -> str:
+        """Remove practice questions from a saved exam workspace, with their attempts: a question with a wrong
+        answer key, a poor question, or one replaced after its source changed (save the replacement first).
+        Ask the student before removing questions they have already practiced."""
+        from .exams import remove_questions
+        return json.dumps(remove_questions(_lib(), plan_id, question_ids), ensure_ascii=False)
 
     @tool(read_only=False, open_world=True)
     def start_sync(course: str = "") -> str:

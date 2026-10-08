@@ -194,7 +194,7 @@ def _save(lib, rel: str, where: str, description: str, by: str = "") -> Dict[str
     atomic_write_json(_store_path(lib), store)
     atomic_write_text(sidecar, apply(text, current(lib, rel_original, original)))
     try:
-        update_index(lib)
+        update_index(lib, wait=2)   # if a sync is writing the index, skip: the next index update includes this
     except Exception:
         pass
     return {"ok": True, "path": rel_original, "unit": unit}

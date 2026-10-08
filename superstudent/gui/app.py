@@ -667,6 +667,10 @@ class App:
                 self.lib(), b.get("course", ""), b.get("title", ""), modules=b.get("modules") or [],
                 exam_date=b.get("exam_date", ""), format=b.get("format", ""), scope_note=b.get("scope_note", "")),
             "POST /api/exam/reveal": lambda b, q: exams.reveal_question(self.lib(), b.get("plan_id", ""), b.get("question_id", "")),
+            "POST /api/exam/review-scope": lambda b, q: exams.review_scope(self.lib(), b.get("plan_id", "")),
+            "POST /api/exam/delete": lambda b, q: exams.delete_plan(self.lib(), b.get("plan_id", "")),
+            "POST /api/exam/remove-questions": lambda b, q: exams.remove_questions(
+                self.lib(), b.get("plan_id", ""), b.get("question_ids") or []),
             "POST /api/exam/attempt": lambda b, q: exams.record_attempt(
                 self.lib(), b.get("plan_id", ""), b.get("question_id", ""), answer=b.get("answer", ""),
                 choice_index=b.get("choice_index", -1), self_rating=b.get("self_rating", "")),

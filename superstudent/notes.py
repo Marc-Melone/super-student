@@ -328,7 +328,7 @@ def _save(lib, path: str, notes: str, by: str = "") -> Dict[str, Any]:
     atomic_write_json(_store_path(lib), store)
     try:
         write_outline(lib, cdir, label, status_fn(lib))
-        update_index(lib)
+        update_index(lib, wait=2)   # if a sync is writing the index, skip: the next index update includes this
     except Exception:
         pass
     message = f"Saved {kind} notes to {entry['file']}."

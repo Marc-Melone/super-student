@@ -146,6 +146,7 @@ input.switch:checked::after { transform: translateX(17px); }
 .choice input { margin-top: 3px; }
 .choice .t { font-weight: 600; }
 .choice .s { color: var(--pencil); font-size: 13.5px; }
+.choice.key { background: var(--ok-soft); }
 .schools { margin-top: 12px; }
 .schools .choice { align-items: center; }
 
@@ -1141,7 +1142,8 @@ function examRequest(p) {
     "Create a balanced set of recall, application and unfamiliar transfer problems using the instructor's definitions, notation and worked-example style. " +
     "Prioritize any mistakes already recorded, while covering every selected topic. Use save_exam_questions with this plan_id. " +
     "Each question needs topic, prompt, type (mcq or short_answer), answer, explanation, difficulty (recall/application/transfer), and citations with exact path, unique locator and a short exact supporting quote. " +
-    "MCQs also need choices and a zero-based correct_index. Explain the reasoning and common mistakes; verify that the quoted passages support the answer. " +
+    "MCQs also need choices and a zero-based correct_index; the answer restates the correct choice (the app checks the two agree), and why the other choices fail goes in the explanation. Explain the reasoning and common mistakes; verify that the quoted passages support the answer. " +
+    "Include any sources listed as new since my last review. For questions flagged for changed sources, save replacements, then remove the old ones with remove_exam_questions. " +
     "The app checks quote location and source changes; it does not verify reasoning. Label practice as AI-generated, never official or guaranteed exam coverage. Tell me what remains uncovered, then I will practice inside Super Student.";
 }
 
@@ -1193,6 +1195,25 @@ function openExamPlan(c, id) {
       if (!r.ok) { body.replaceChildren(el("p", { class: "err" }, r.message || "Couldn't load this exam.")); return; }
       p = r.plan; draw();
     }
+    async function reviewScope() {
+      const r = await api("/api/exam/review-scope", { plan_id: id });
+      if (!r.ok) { toast(r.message || "Couldn't update this workspace.", true); return; }
+      p = r.plan; draw(); toast("Sources marked as reviewed.");
+    }
+    function removeQuestion(q) {
+      confirmAction("Remove this question?", "Its practice history is removed with it. Use this for a question with a wrong answer key, a poor question, or one replaced after its source changed.", "Remove question", async () => {
+        const r = await api("/api/exam/remove-questions", { plan_id: id, question_ids: [q.id] });
+        if (!r.ok) { toast(r.message || "Couldn't remove the question.", true); return false; }
+        return () => { toast("Question removed."); load(); };
+      });
+    }
+    function deletePlan() {
+      confirmAction("Delete this exam workspace?", "This deletes \u201c" + p.title + "\u201d with its " + plural((p.questions || []).length, "practice question") + " and your practice history. Your course files and notes stay.", "Delete workspace", async () => {
+        const r = await api("/api/exam/delete", { plan_id: id });
+        if (!r.ok) { toast(r.message || "Couldn't delete it.", true); return false; }
+        return () => { close(); toast("Exam workspace deleted."); openExams(c); };
+      });
+    }
     function draw() {
       const metrics = p.metrics || {};
       const coverage = p.coverage || {};
@@ -1211,13 +1232,16 @@ function openExamPlan(c, id) {
         el("p", { class: "small" }, [p.exam_date && "Exam: " + p.exam_date, p.format].filter(Boolean).join(" · ")),
         el("p", { class: "muted small" }, p.scope_note_label || "Study scope selected by you. Check it against your instructor's exam instructions."),
         p.scope_note ? el("p", { class: "small" }, p.scope_note) : null,
+        el("p", { class: "small" }, "Covers " + ((p.selected_module_names || []).length ? "modules: " + p.selected_module_names.join(", ") : (p.selected_modules || []).length ? "the selected modules" : "the whole course") + ", plus course references such as the syllabus and announcements."),
         ...warnings.map(w => el("p", { class: "aside small" }, typeof w === "string" ? w : JSON.stringify(w))),
+        p.scope_changed ? el("div", { class: "row", style: "margin-bottom:12px" }, el("button", { class: "btn small", onclick: reviewScope }, "Mark sources as reviewed"),
+          el("span", { class: "help", style: "margin:0" }, "Once you've looked at the changes above.")) : null,
         el("div", { class: "row" }, el("button", { class: "btn primary", onclick: () => copyText(examRequest(p)) }, questions.length ? "Copy request for more practice" : "Copy preparation request"),
           el("button", { class: "btn", onclick: load }, "Refresh questions")),
         el("p", { class: "help" }, "Paste the request into your connected ChatGPT or Claude, then refresh here."),
         details,
         el("p", { class: "small" }, "Practice references " + (coverage.cited_sources || 0) + " of " + (coverage.available_sources || 0) + " available sources."),
-        (coverage.uncited_source_paths || []).length ? el("p", { class: "aside small" }, plural(coverage.uncited_source_paths.length, "source") + " still has no current practice question. Ask your AI to fill those gaps.") : null,
+        (coverage.uncited_source_paths || []).length ? el("p", { class: "aside small" }, plural(coverage.uncited_source_paths.length, "source") + (coverage.uncited_source_paths.length === 1 ? " still has" : " still have") + " no current practice question. Ask your AI to fill those gaps.") : null,
         el("h3", null, "Practice and review"),
         el("p", { class: "muted small" }, "Quizzes use an AI answer key. Written answers are self-assessed."),
         el("div", { class: "small", style: "margin-bottom:16px" }, metricText(metrics)),
@@ -1226,17 +1250,32 @@ function openExamPlan(c, id) {
           el("p", { class: "help" }, "Practice is AI-generated. Checked quotations confirm the source text exists; check explanations against the sources. Source references do not prove complete topic coverage. Quiz accuracy counts first attempts before viewing the answer. Self-assessment and quiz results are not proof of mastery or a prediction of your exam grade.")),
         sorted.length ? el("div", { class: "choices" }, sorted.map(q => el("div", { class: "choice", style: "display:block" },
           el("div", { class: "row" }, el("strong", null, q.topic || "Practice"), el("span", { class: "spacer" }),
-            el("button", { class: "btn small", disabled: q.status === "stale", onclick: () => openPractice(id, q, load) }, q.status === "stale" ? "Regenerate from current sources" : "Practice")),
+            el("button", { class: "btn quiet small", onclick: () => removeQuestion(q) }, "Remove"),
+            el("button", { class: "btn small", disabled: q.status === "stale", onclick: () => openPractice(id, q, load) }, q.status === "stale" ? "Needs regenerating" : "Practice")),
           el("p", { class: "muted small", style: "margin:6px 0" }, q.prompt),
           el("div", { class: "small muted" }, (q.difficulty || "") + " · " + (q.type === "mcq" ? "Quiz" : "Self-assessed answer") + " · " + plural(q.attempt_count || 0, "attempt")),
-          q.status === "stale" ? el("p", { class: "err small" }, "Source changed or unavailable. Ask your AI to regenerate this question.") : null,
+          q.status === "stale" ? el("p", { class: "err small" }, "Source changed or unavailable. Ask your AI to regenerate this question, then remove this one.") : null,
           q.next_review_at ? el("div", { class: "help" }, "Review: " + new Date(q.next_review_at).toLocaleString()) : null,
           (() => { const row = queue.find(r => r.question_id === q.id); return row ? el("span", { class: "pill off" }, row.reason) : null; })())))
           : el("div", { class: "aside" }, "No questions yet. Ask your connected AI to create practice from the selected sources using the preparation request above."),
-        el("div", { class: "sheet-foot" }, el("button", { class: "btn", onclick: () => { close(); openExams(c); } }, "All exam workspaces"))));
+        el("div", { class: "sheet-foot" }, el("button", { class: "btn quiet", style: "color:var(--bad);margin-right:auto", onclick: deletePlan }, "Delete workspace"),
+          el("button", { class: "btn", onclick: () => { close(); openExams(c); } }, "All exam workspaces"))));
     }
     load(); return [body];
   }, { wide: true });
+}
+
+function confirmAction(title, message, label, action) {
+  sheet(title, close => {
+    const go = el("button", { class: "btn destroy", onclick: async () => {
+      go.disabled = true;
+      const done = await action();
+      if (!done) { go.disabled = false; return; }
+      close();
+      if (typeof done === "function") done();
+    } }, label);
+    return [el("p", null, message), el("div", { class: "sheet-foot" }, el("button", { class: "btn", onclick: () => close() }, "Cancel"), go)];
+  });
 }
 
 function metricText(m) {
@@ -1272,15 +1311,28 @@ function openPractice(planId, q, onSaved) {
       }
       const r = await api("/api/exam/reveal", { plan_id: planId, question_id: q.id });
       busy = false;
-      if (!r.ok) { error.textContent = r.message; submit.disabled = false; return; }
+      if (!r.ok) {
+        if (attempt) { error.textContent = "Your answer was saved, but the worked answer couldn't be shown: " + r.message; onSaved(); return; }
+        error.textContent = r.message; submit.disabled = false; return;
+      }
       const review = r.question || r;
       answer.disabled = true; options.querySelectorAll("input").forEach(i => { i.disabled = true; });
+      if (q.type === "mcq" && Number.isInteger(review.correct_index) && options.children[review.correct_index]) {
+        const right = options.children[review.correct_index];
+        right.classList.add("key");
+        right.append(el("span", { class: "pill ok", style: "margin-left:auto" }, "Answer key"));
+      }
       const result = attempt && (attempt.attempt || attempt);
       feedback.replaceChildren(el("div", null,
         result ? el("p", { class: result.correct ? "good" : "err" }, result.correct ? "Correct on this attempt." : "Review the reasoning and try a related problem.") : null,
         el("h3", null, "Worked answer"), el("div", { class: "aside small", style: "white-space:pre-wrap" }, review.answer || review.expected_answer || ""),
         el("p", { class: "small", style: "white-space:pre-wrap" }, review.explanation || ""),
         el("p", { class: "help" }, "AI-generated answer. Supporting source quotations were checked; reasoning still needs review."),
+        el("p", { class: "help" }, "Answer key or question looks wrong? ", el("button", { class: "btn quiet small", onclick: () => confirmAction("Remove this question?", "Its practice history is removed with it.", "Remove question", async () => {
+          const removed = await api("/api/exam/remove-questions", { plan_id: planId, question_ids: [q.id] });
+          if (!removed.ok) { toast(removed.message || "Couldn't remove the question.", true); return false; }
+          return () => { toast("Question removed."); close(); onSaved(); };
+        }) }, "Remove it")),
         ...(review.citations || []).map(s => el("div", { class: "aside small" }, el("button", { class: "btn quiet small", onclick: () => openItem(s.path) }, (s.locator || "Source") + " · " + s.path.split("/").pop()),
           el("p", { style: "margin:4px 0;white-space:pre-wrap" }, s.quote))),
         q.type === "mcq" ? null : el("div", null, el("p", { class: "small" }, "After comparing, how did your answer go? This is your self-assessment."),

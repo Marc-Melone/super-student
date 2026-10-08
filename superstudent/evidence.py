@@ -3,8 +3,9 @@
 This establishes that a quoted passage exists at a precise source locator. It does not establish that an
 answer follows from that passage, or that a model-generated explanation is correct. Generated study notes
 and visual descriptions cannot serve as original evidence. Extracted text must be bound to the original
-bytes used for extraction. Source hashes include the text, its adjacent original when present, and known
-availability/version, so saved practice is invalidated by source changes.
+bytes used for extraction. Source fingerprints cover the course text, its adjacent original and source
+archive when present, and availability, so saved practice is invalidated by source changes. Where a file
+sits is not part of the fingerprint: sync carries saved citations along when it moves files.
 """
 
 from __future__ import annotations
@@ -181,23 +182,33 @@ def _source(lib, course_folder: str, value: str, source_cache=None) -> Dict[str,
             archive_digest = _digest(lib, archive, source_cache)
             if bound_archive.lower() != archive_digest:
                 raise EvidenceError("stale_extraction", "The source archive changed after this file was unpacked. Refresh the course to unpack it again before using this evidence.")
-        # Hash raw text, rather than notes.fingerprint's deduplication view: changed headings/locators must
-        # invalidate saved evidence too. An original may change without a sidecar mtime or size change.
-        digests = {"path": canonical, "text": hashlib.sha256(raw.encode("utf-8")).hexdigest(),
-                   "original_path": original.relative_to(lib.root).as_posix() if has_original else "",
-                   "original": original_digest,
-                   "status": status["status"], "version": status["last_successful_version"]}
+        # The fingerprint covers what the evidence depends on: every line of the course text (headings and
+        # locators included), the original's exact bytes (which can change without the text version changing),
+        # the source archive, and availability. It leaves out where the file sits and descriptive front matter
+        # (title, module, dates), so a renamed or reordered module, or a picture description saved by the
+        # study pass, doesn't invalidate practice; sync carries citations along when it moves files.
+        content = {"v": 2, "text": hashlib.sha256(strip_blocks(body).encode("utf-8")).hexdigest(),
+                   "original": original_digest, "status": status["status"]}
+        # 1.7.0 fingerprints also covered the path, the whole file and the Canvas version stamp. They're still
+        # accepted while nothing they covered has changed, so existing practice survives the upgrade.
+        legacy = {"path": canonical, "text": hashlib.sha256(raw.encode("utf-8")).hexdigest(),
+                  "original_path": original.relative_to(lib.root).as_posix() if has_original else "",
+                  "original": original_digest,
+                  "status": status["status"], "version": status["last_successful_version"]}
         if archive_path is not None:
-            digests.update(archive_path=archive_rel, archive=archive_digest,
-                           archive_status=archive_status["status"], archive_version=archive_status["last_successful_version"])
-        fingerprint = hashlib.sha256(json.dumps(digests, sort_keys=True).encode("utf-8")).hexdigest()
+            content.update(archive=archive_digest, archive_status=archive_status["status"])
+            legacy.update(archive_path=archive_rel, archive=archive_digest,
+                          archive_status=archive_status["status"], archive_version=archive_status["last_successful_version"])
+        fingerprint = hashlib.sha256(json.dumps(content, sort_keys=True).encode("utf-8")).hexdigest()
+        legacy_fingerprint = hashlib.sha256(json.dumps(legacy, sort_keys=True).encode("utf-8")).hexdigest()
         sections = _split_sections(strip_blocks(body))
         names = unique_locators([name for name, _, _ in sections])
         locators: Dict[str, List[int]] = {}
         for i, name in enumerate(names):
             locators.setdefault(_norm_loc(name), []).append(i)
         source = {"path": canonical, "sections": sections, "names": names, "locators": locators,
-                  "source_fingerprint": fingerprint, "source_status": status["status"]}
+                  "source_fingerprint": fingerprint, "legacy_fingerprint": legacy_fingerprint,
+                  "source_status": status["status"]}
         after = (_stamp(lib, target), _stamp(lib, original_path), _stamp(lib, lib.state_path))
         if archive_path is not None:
             after += (_stamp(lib, archive_path),)
@@ -221,6 +232,11 @@ def source_fingerprint(lib, path: str, course_folder: str = "", source_cache: Op
     Cache entries are guarded by file identity, size, mtime and ctime, plus the current sync-state file
     and any source archive recorded when the original was unpacked.
     """
+    return source_fingerprints(lib, path, course_folder, source_cache)[0]
+
+
+def source_fingerprints(lib, path: str, course_folder: str = "", source_cache: Optional[dict] = None) -> tuple:
+    """(current fingerprint, 1.7.0-format fingerprint) of a current original source; see source_fingerprint."""
     if not course_folder:
         rel = _relative(path)
         folders = {c.get("folder") for c in _state(lib, source_cache).get("courses", {}).values() if c.get("folder")}
@@ -228,7 +244,8 @@ def source_fingerprint(lib, path: str, course_folder: str = "", source_cache: Op
         if len(matches) != 1:
             raise EvidenceError("invalid_course", "The source must belong to exactly one registered course.")
         course_folder = matches[0]
-    return _source(lib, course_folder, path, source_cache)["source_fingerprint"]
+    source = _source(lib, course_folder, path, source_cache)
+    return source["source_fingerprint"], source["legacy_fingerprint"]
 
 
 def _normal(text: str) -> str:
@@ -259,7 +276,7 @@ def _validate(lib, course_folder: str, citations: List[Dict[str, Any]], recheck:
                 expected = citation.get("source_fingerprint")
                 if not isinstance(expected, str) or not expected:
                     raise EvidenceError("missing_fingerprint", "Saved evidence is missing its original source fingerprint.")
-                if expected != source["source_fingerprint"]:
+                if expected not in (source["source_fingerprint"], source["legacy_fingerprint"]):
                     raise EvidenceError("changed_source", "The source changed after this evidence was saved; regenerate the practice item.")
             sections, names = source["sections"], source["names"]
             wanted = _norm_loc(heading_locator(locator))
