@@ -394,21 +394,50 @@ class ExamTests(unittest.TestCase):
         public = exams.get_plan(self.lib, plan["id"], include_answers=False)
         self.assertEqual([q["status"] for q in public["plan"]["questions"]], ["stale", "stale"])
 
-    def test_new_material_warns_scope_review_without_invalidating_other_source(self):
+    def test_new_material_is_listed_can_be_practiced_and_clears_after_review(self):
         plan_id, qid = self.saved()
         added = self.source.with_name("added.md")
         added.write_text("# Added\n\n## [Page 1]\n\nNew lecture material.\n")
+        added_rel = added.relative_to(self.lib.root).as_posix()
         plan = exams.get_plan(self.lib, plan_id)["plan"]
         self.assertTrue(plan["scope_changed"])
+        self.assertEqual([r["path"] for r in plan["scope_changes"]["added"]], [added_rel])
+        self.assertIn("1 new source", plan["scope_warnings"][0])
+        self.assertIn(added_rel, {r["path"] for r in plan["inventory"]})
+        self.assertIn(added_rel, plan["coverage"]["uncited_source_paths"])
         self.assertEqual(plan["questions"][0]["status"], "current")
-        q = self.question(citations=[{"path": added.relative_to(self.lib.root).as_posix(), "locator": "Page 1", "quote": "New lecture material."}])
-        self.assertFalse(exams.save_questions(self.lib, plan_id, [q])["ok"])
+        q = self.question(prompt="What is new this week?", choices=["New lecture material", "Nothing"],
+                          answer="New lecture material", citations=[{"path": added_rel, "locator": "Page 1",
+                                                                     "quote": "New lecture material."}])
+        saved = exams.save_questions(self.lib, plan_id, [q])
+        self.assertTrue(saved["ok"], saved)
+        reviewed = exams.review_scope(self.lib, plan_id)
+        self.assertTrue(reviewed["ok"], reviewed)
+        self.assertFalse(reviewed["plan"]["scope_changed"])
+        self.assertEqual(reviewed["plan"]["scope_warnings"], [])
+        later = exams.get_plan(self.lib, plan_id)["plan"]
+        self.assertFalse(later["scope_changed"])
+        self.assertEqual([q["status"] for q in later["questions"]], ["current", "current"])
+
+    def test_new_material_in_unselected_module_stays_out_of_scope(self):
+        plan = self.plan(modules=[1])
+        other = self.lib.root / self.folder / "Modules/02 - Risk/new risk.md"
+        other.write_text("# New risk\n\n## [Page 1]\n\nBeta measures market risk.\n")
+        public = exams.get_plan(self.lib, plan["id"])["plan"]
+        self.assertFalse(public["scope_changed"])
+        self.assertNotIn(other.relative_to(self.lib.root).as_posix(), {r["path"] for r in public["inventory"]})
+        q = self.question(citations=[{"path": other.relative_to(self.lib.root).as_posix(), "locator": "Page 1",
+                                      "quote": "Beta measures market risk."}])
+        result = exams.save_questions(self.lib, plan["id"], [q])
+        self.assertFalse(result["ok"])
+        self.assertIn("outside this plan", result["message"])
 
     def test_source_reference_coverage_identifies_uncited_and_stale_sources(self):
         plan_id, qid = self.saved()
         public = exams.get_plan(self.lib, plan_id, include_answers=False)["plan"]
         coverage = public["coverage"]
-        self.assertEqual(coverage["available_sources"], 3)
+        self.assertEqual(coverage["available_sources"], 2)      # the two lessons; the syllabus is a reference
+        self.assertEqual(coverage["reference_sources"], 1)
         self.assertEqual(coverage["cited_sources"], 1)
         self.assertIn(self.path2, coverage["uncited_source_paths"])
         self.assertNotIn(self.path, coverage["uncited_source_paths"])
@@ -426,16 +455,256 @@ class ExamTests(unittest.TestCase):
         plan = self.plan()
         (self.lib.root / self.path2).write_text("---\nsync_status: restricted\n---\n# Risk\n\n## [Page 1]\n\nDiversification reduces risk.\n")
         public = exams.get_plan(self.lib, plan["id"])["plan"]
-        self.assertEqual(public["coverage"]["available_sources"], 2)
+        self.assertEqual(public["coverage"]["available_sources"], 1)
         self.assertNotIn(self.path2, public["coverage"]["uncited_source_paths"])
         self.assertTrue(public["scope_warnings"])
 
-    def test_module_snapshot_change_warns_scope_review(self):
+    def test_module_rename_alone_is_not_a_scope_change(self):
         plan = self.plan(modules=[1])
         snap = self.lib.load_snapshot("1")
         snap["modules"][0]["name"] = "Revised name"
         self.lib.save_snapshot("1", snap)
-        self.assertTrue(exams.get_plan(self.lib, plan["id"])["plan"]["scope_changed"])
+        public = exams.get_plan(self.lib, plan["id"])["plan"]
+        self.assertFalse(public["scope_changed"])
+        self.assertEqual(public["selected_module_names"], ["Revised name"])
+
+    def test_selected_module_is_followed_when_the_instructor_inserts_one_before_it(self):
+        plan_id, qid = self.saved(plan=self.plan(modules=[2]),
+                                  question=self.question(citations=[{"path": self.path2, "locator": "Page 1",
+                                                                     "quote": "Diversification reduces firm-specific risk."}],
+                                                         prompt="What does diversification reduce?",
+                                                         choices=["Firm-specific risk", "Market risk"],
+                                                         answer="Firm-specific risk"))
+        intro = self.lib.root / self.folder / "Modules/00 - Orientation"
+        intro.mkdir()
+        (intro / "welcome.md").write_text("# Welcome\n\n## [Page 1]\n\nBring a calculator.\n")
+        snap = self.lib.load_snapshot("1")
+        snap["modules"].insert(0, {"id": 100, "name": "Orientation", "position": 1, "dir": "Modules/00 - Orientation", "items": []})
+        for position, module in enumerate(snap["modules"], 1):
+            module["position"] = position
+        self.lib.save_snapshot("1", snap)
+        public = exams.get_plan(self.lib, plan_id)["plan"]
+        paths = {r["path"] for r in public["inventory"]}
+        self.assertIn(self.path2, paths)
+        self.assertFalse(any("Orientation" in p for p in paths))
+        self.assertEqual(public["selected_modules"], [3])
+        self.assertEqual(public["selected_module_names"], ["Risk"])
+        self.assertFalse(public["scope_changed"])
+        self.assertEqual(public["questions"][0]["status"], "current")
+
+    def test_deleted_selected_module_is_reported_without_widening_scope(self):
+        both = self.plan(modules=[1, 2])
+        only_risk = self.plan(modules=[2])
+        snap = self.lib.load_snapshot("1")
+        snap["modules"] = [m for m in snap["modules"] if m["position"] != 2]
+        self.lib.save_snapshot("1", snap)
+        public = exams.get_plan(self.lib, both["id"])["plan"]
+        self.assertTrue(public["scope_changed"])
+        self.assertEqual(public["scope_changes"]["missing_modules"], ["Risk"])
+        self.assertTrue(any("selected module Risk" in w for w in public["scope_warnings"]))
+        reviewed = exams.review_scope(self.lib, both["id"])["plan"]
+        self.assertFalse(reviewed["scope_changed"], reviewed["scope_warnings"])
+        self.assertEqual(reviewed["selected_module_names"], ["Time value"])
+        gone = exams.get_plan(self.lib, only_risk["id"])["plan"]
+        self.assertTrue(any("None of this workspace's selected modules" in w for w in gone["scope_warnings"]))
+        self.assertNotIn(self.path, {r["path"] for r in gone["inventory"]})
+        still_gone = exams.review_scope(self.lib, only_risk["id"])["plan"]
+        self.assertNotIn(self.path, {r["path"] for r in still_gone["inventory"]})
+        self.assertTrue(still_gone["scope_changed"])
+
+    def test_renamed_module_moving_files_keeps_practice_and_history(self):
+        plan_id, qid = self.saved(plan=self.plan(modules=[1]))
+        self.assertTrue(exams.record_attempt(self.lib, plan_id, qid, choice_index=0)["ok"])
+        old_dir = self.lib.root / self.folder / "Modules/01 - Time value"
+        new_dir = old_dir.with_name("01 - Time value of money")
+        old_dir.rename(new_dir)                                 # what sync does when the module is renamed
+        snap = self.lib.load_snapshot("1")
+        snap["modules"][0].update(name="Time value of money", dir="Modules/01 - Time value of money")
+        self.lib.save_snapshot("1", snap)
+        for name in ("lesson.md",):
+            exams.move(self.lib, f"{self.folder}/Modules/01 - Time value/{name}",
+                       f"{self.folder}/Modules/01 - Time value of money/{name}")
+        public = exams.get_plan(self.lib, plan_id)["plan"]
+        self.assertEqual(public["questions"][0]["status"], "current")
+        self.assertEqual(public["questions"][0]["citations"][0]["path"],
+                         f"{self.folder}/Modules/01 - Time value of money/lesson.md")
+        self.assertEqual(public["metrics"]["first_attempt_mcq_count"], 1)
+        self.assertEqual(public["metrics"]["stale_attempts_excluded"], 0)
+        self.assertFalse(public["scope_changed"], public["scope_warnings"])
+        self.assertTrue(exams.record_attempt(self.lib, plan_id, qid, choice_index=0)["ok"])
+
+    def test_picture_description_saved_later_keeps_practice_current(self):
+        plan_id, qid = self.saved()
+        self.source.write_text(self.source.read_text().replace(
+            "## [Page 1]\n", "## [Page 1]\n> **What this shows** (described by Claude, 2026-10-06): A timeline of cash flows.\n"))
+        public = exams.get_plan(self.lib, plan_id)["plan"]
+        self.assertEqual(public["questions"][0]["status"], "current")
+        self.assertFalse(public["scope_changed"])
+
+    def test_practice_saved_by_1_7_0_stays_current_and_is_upgraded(self):
+        from superstudent import evidence
+        plan_id, qid = self.saved()
+        store = self.lib.meta / "exams.json"
+        data = json.loads(store.read_text())
+        plan = data["plans"][plan_id]
+        legacy = {r["path"]: evidence.source_fingerprints(self.lib, r["path"], self.folder)[1]
+                  for r in plan["inventory"] if r["source_fingerprint"]}
+        for citation in plan["questions"][0]["citations"]:
+            citation["source_fingerprint"] = legacy[citation["path"]]
+        for row in plan["inventory"]:
+            row["source_fingerprint"] = legacy.get(row["path"], "")
+            row.pop("_legacy", None)
+        for key in ("selected_module_ids", "scope_reviewed_at"):
+            plan.pop(key)
+        for module in plan["available_modules"]:
+            module.pop("id")
+        store.write_text(json.dumps(data))
+        public = exams.get_plan(self.lib, plan_id)["plan"]
+        self.assertEqual(public["questions"][0]["status"], "current")
+        self.assertFalse(public["scope_changed"], public["scope_warnings"])
+        self.assertTrue(exams.record_attempt(self.lib, plan_id, qid, choice_index=0)["ok"])
+        upgraded = json.loads(store.read_text())["plans"][plan_id]
+        current = evidence.source_fingerprints(self.lib, self.path, self.folder)[0]
+        self.assertEqual(upgraded["questions"][0]["citations"][0]["source_fingerprint"], current)
+        self.assertEqual(next(r for r in upgraded["inventory"] if r["path"] == self.path)["source_fingerprint"], current)
+
+    def test_delete_workspace_and_remove_questions(self):
+        plan_id, qid = self.saved()
+        other = exams.save_questions(self.lib, plan_id, [self.question(prompt="Second question?")])
+        second = other["question_ids"][0]
+        self.assertTrue(exams.record_attempt(self.lib, plan_id, qid, choice_index=1)["ok"])
+        for bad in ([], ["missing"], [qid, "missing"], "abc", [1]):
+            self.assertFalse(exams.remove_questions(self.lib, plan_id, bad)["ok"])
+        removed = exams.remove_questions(self.lib, plan_id, [qid])
+        self.assertEqual((removed["removed"], removed["attempts_removed"], removed["question_count"]), (1, 1, 1))
+        public = exams.get_plan(self.lib, plan_id)["plan"]
+        self.assertEqual([q["id"] for q in public["questions"]], [second])
+        self.assertEqual(public["attempts"], [])
+        deleted = exams.delete_plan(self.lib, plan_id)
+        self.assertTrue(deleted["ok"], deleted)
+        self.assertFalse(exams.get_plan(self.lib, plan_id)["ok"])
+        self.assertFalse(exams.delete_plan(self.lib, plan_id)["ok"])
+        self.assertEqual(exams.list_plans(self.lib)["plans"], [])
+
+    def test_answer_key_must_match_the_stated_answer(self):
+        plan = self.plan()
+        bad = [dict(answer="Computes future value"),                 # names the other choice
+               dict(answer="B) Computes future value"),               # option label for the other choice
+               dict(answer="It computes the future value of cash flows"),   # reads like the other choice
+               dict(correct_index=1, answer="Computes present value")]      # miscounted index
+        for change in bad:
+            with self.subTest(change=change):
+                result = exams.save_questions(self.lib, plan["id"], [self.question(**change)])
+                self.assertFalse(result["ok"], result)
+                self.assertIn("Answer key mismatch", result["message"])
+                self.assertIn("counts from 0", result["message"])
+        good = [dict(answer="Computes present value"), dict(answer="A) Computes present value"),
+                dict(answer="It turns future cash flows into a present value."),
+                dict(answer="Present value, not future value"),
+                dict(type="short_answer", answer="Anything; written answers have no key")]
+        for i, change in enumerate(good):
+            with self.subTest(change=change):
+                result = exams.save_questions(self.lib, plan["id"], [self.question(prompt=f"Question {i}?", **change)])
+                self.assertTrue(result["ok"], result)
+
+    def test_review_progress_shows_when_the_answer_is_viewed_after_checking(self):
+        """The app shows the worked answer after every quiz check. 1.7.0 then left every later attempt out of
+        accuracy, so a question missed once and answered right on three later days still read 0%."""
+        plan_id, qid = self.saved()
+        for day, choice in enumerate((1, 0, 0, 0)):
+            self.at = datetime(2026, 10, 5 + day, 12, tzinfo=timezone.utc)
+            attempt = exams.record_attempt(self.lib, plan_id, qid, choice_index=choice)
+            self.assertFalse(attempt["attempt"]["assisted"])
+            self.assertTrue(exams.reveal_question(self.lib, plan_id, qid)["ok"])     # what the app does next
+        metrics = exams.get_plan(self.lib, plan_id)["plan"]["metrics"]
+        self.assertEqual((metrics["first_attempt_mcq_count"], metrics["first_attempt_mcq_accuracy"]), (1, 0))
+        self.assertEqual((metrics["latest_mcq_count"], metrics["latest_mcq_accuracy"]), (1, 1))
+        self.assertEqual((metrics["recent_mcq_count"], metrics["recent_mcq_accuracy"]), (4, 0.75))
+
+    def test_viewing_the_answer_before_answering_again_is_still_assisted(self):
+        plan_id, qid = self.saved()
+        exams.record_attempt(self.lib, plan_id, qid, choice_index=1)
+        exams.reveal_question(self.lib, plan_id, qid)       # reviewing that attempt
+        exams.reveal_question(self.lib, plan_id, qid)       # looking again before the next try
+        peeked = exams.record_attempt(self.lib, plan_id, qid, choice_index=0)
+        self.assertTrue(peeked["attempt"]["assisted"])
+        later = exams.record_attempt(self.lib, plan_id, qid, choice_index=0)
+        self.assertFalse(later["attempt"]["assisted"])
+        metrics = later["plan"]["metrics"]
+        self.assertEqual((metrics["recent_mcq_count"], metrics["latest_mcq_accuracy"]), (2, 1))
+
+    def test_quiz_attempts_saved_by_1_7_0_count_toward_progress(self):
+        plan_id, qid = self.saved()
+        exams.record_attempt(self.lib, plan_id, qid, choice_index=1)
+        exams.record_attempt(self.lib, plan_id, qid, choice_index=0)
+        store_path = self.lib.meta / "exams.json"
+        store = json.loads(store_path.read_text())
+        for attempt in store["plans"][plan_id]["attempts"]:
+            attempt.pop("assist_rule")
+            attempt["assisted"] = True                     # 1.7.0 marked these after the answer was shown
+        store_path.write_text(json.dumps(store))
+        plan = exams.get_plan(self.lib, plan_id)["plan"]
+        self.assertEqual(plan["metrics"]["first_attempt_mcq_accuracy"], 0)
+        self.assertEqual(plan["metrics"]["latest_mcq_accuracy"], 1)
+        self.assertFalse(any(a["assisted"] for a in plan["attempts"]))
+
+    def test_coverage_counts_study_sources_not_announcements(self):
+        root = self.lib.root / self.folder
+        for section, kind, body in (("Announcements", "announcement", "Office hours move to Friday."),
+                                    ("Assignments", "assignment", "Problem set 3 is due Monday."),
+                                    ("Discussions", "discussion", "Introduce yourself."),
+                                    ("Pages", "page", "Course policies."),
+                                    ("Quizzes", "quiz", "Quiz 1 instructions."),
+                                    ("Files", "pdf", "Duration measures rate sensitivity.")):
+            (root / section).mkdir(exist_ok=True)
+            (root / section / "item.md").write_text(f"---\ntype: {kind}\n---\n# {section}\n\n## [Page 1]\n\n{body}\n")
+        (root / "Quizzes" / "review.md").write_text("---\ntype: quiz\n---\n# Quiz 2\n\n## Question review\n\nQ1. What is NPV?\n")
+        (root / "Modules/02 - Risk/lesson page.md").write_text("---\ntype: page\n---\n# Risk lesson\n\n## Beta\n\nBeta measures market risk.\n")
+        plan_id, _ = self.saved()
+        plan = exams.get_plan(self.lib, plan_id)["plan"]
+        roles = {r["path"].split("/", 2)[2]: r["role"] for r in plan["inventory"]}
+        self.assertEqual({k for k, v in roles.items() if v == "study"},
+                         {"Modules/01 - Time value/lesson.md", "Modules/02 - Risk/risk.md",
+                          "Modules/02 - Risk/lesson page.md", "Files/item.md", "Quizzes/review.md"})
+        coverage = plan["coverage"]
+        self.assertEqual((coverage["available_sources"], coverage["cited_sources"]), (5, 1))
+        self.assertEqual(coverage["reference_sources"], 6)    # 5 references + the syllabus
+        self.assertFalse(any("Announcements" in p or "Syllabus" in p for p in coverage["uncited_source_paths"]))
+        q = self.question(citations=[{"path": self.folder + "/Announcements/item.md", "locator": "Page 1",
+                                      "quote": "Office hours move to Friday."}], prompt="When are office hours?")
+        self.assertTrue(exams.save_questions(self.lib, plan_id, [q])["ok"])      # still allowed as a citation
+        coverage = exams.get_plan(self.lib, plan_id)["plan"]["coverage"]
+        self.assertEqual((coverage["cited_sources"], coverage["cited_reference_sources"]), (1, 1))
+
+    def test_ai_view_is_compact_and_full_questions_on_request(self):
+        plan = self.plan()
+        questions = [self.question(prompt=f"Question {i}: " + "Explain the discounting step carefully. " * 20,
+                                   choices=[f"Computes present value ({i})", "Computes future value"],
+                                   answer=f"Computes present value ({i})") for i in range(30)]
+        saved = exams.save_questions(self.lib, plan["id"], questions)
+        self.assertTrue(saved["ok"], saved)
+        reply = exams.ai_save_reply(saved)
+        self.assertNotIn("plan", reply)
+        self.assertEqual((reply["added"], reply["question_count"]), (30, 30))
+        self.assertIn(self.path2, reply["coverage"]["uncited_source_paths"])
+        self.assertLess(len(json.dumps(reply)), len(json.dumps(saved)) / 20)
+        public = exams.get_plan(self.lib, plan["id"])["plan"]
+        view = exams.ai_view(public)
+        self.assertLess(len(json.dumps(view)), len(json.dumps(public)) / 3)
+        self.assertNotIn("EXPECTED_", json.dumps(view))
+        row = view["questions"][0]
+        self.assertLessEqual(len(row["prompt"]), exams.AI_PROMPT_CHARS)
+        self.assertEqual(row["cites"], [{"path": self.path, "locator": "Page 1"}])
+        self.assertNotIn("locators", view["sources"][0])
+        self.assertIn("locators", exams.ai_view(public, include_locators=True)["sources"][0])
+        full = exams.ai_view(public, question_ids=[row["id"]])["question_details"][0]
+        self.assertIn("EXPECTED_EXPLANATION", full["explanation"])
+        self.assertEqual(full["citations"][0]["quote"], "Discounting converts future cash flows to present value.")
+        with self.assertRaises(exams.ExamError):
+            exams.ai_view(public, question_ids=["not-a-question"])
+        exams.record_attempt(self.lib, plan["id"], row["id"], choice_index=1)
+        view = exams.ai_view(exams.get_plan(self.lib, plan["id"])["plan"])
+        self.assertEqual(next(q for q in view["questions"] if q["id"] == row["id"])["last_result"], "incorrect")
 
     def test_list_plans_is_scoped_and_never_contains_answers(self):
         self.saved()

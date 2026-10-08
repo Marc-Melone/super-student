@@ -81,6 +81,28 @@ class ExamWorkflow(unittest.TestCase):
         self.assertIn("regeneration", stale["message"])
         self.assertFalse(self.post("/api/exam/reveal", plan_id=pid, question_id=qid)["ok"])
 
+    def test_http_review_remove_and_delete(self):
+        plan = self.post("/api/exam/create", course=self.folder, title="Final", modules=[1])
+        self.assertTrue(plan["ok"], plan)
+        pid = plan["plan"]["id"]
+        qid = exams.save_questions(self.lib, pid, [self.question()])["question_ids"][0]
+        atomic_write_text(self.lib.root / self.folder / "Modules/01 - Valuation/Added.md",
+                          front_matter({"title": "Added", "type": "page"}) + "# Added\n\n## [Page 1]\nPayback ignores timing.\n")
+        changed = self.get("/api/exam", id=pid)["plan"]
+        self.assertTrue(changed["scope_changed"])
+        self.assertEqual([r["title"] for r in changed["scope_changes"]["added"]], ["Added"])
+        for route, body in (("/api/exam/review-scope", {"plan_id": pid}), ("/api/exam/delete", {"plan_id": pid}),
+                            ("/api/exam/remove-questions", {"plan_id": pid, "question_ids": [qid]})):
+            self.assertEqual(requests.post(self.base + route, json=body, timeout=10).status_code, 403)
+        reviewed = self.post("/api/exam/review-scope", plan_id=pid)
+        self.assertTrue(reviewed["ok"], reviewed)
+        self.assertFalse(reviewed["plan"]["scope_changed"])
+        self.assertFalse(self.post("/api/exam/remove-questions", plan_id=pid, question_ids=[])["ok"])
+        removed = self.post("/api/exam/remove-questions", plan_id=pid, question_ids=[qid])
+        self.assertEqual((removed["removed"], removed["question_count"]), (1, 0))
+        self.assertTrue(self.post("/api/exam/delete", plan_id=pid)["ok"])
+        self.assertEqual(self.get("/api/exams", course=self.folder)["plans"], [])
+
     def test_bad_input_returns_actionable_message(self):
         bad = self.post("/api/exam/create", course=self.folder, title="Midterm", modules=[999])
         self.assertFalse(bad["ok"])
@@ -99,7 +121,8 @@ class ExamWorkflow(unittest.TestCase):
                 async with ClientSession(read, write) as session:
                     await session.initialize()
                     names = {t.name for t in (await session.list_tools()).tools}
-                    self.assertTrue({"exam_plans", "create_exam_plan", "check_source_evidence", "save_exam_questions"} <= names)
+                    self.assertTrue({"exam_plans", "create_exam_plan", "check_source_evidence", "save_exam_questions",
+                                     "remove_exam_questions"} <= names)
                     async def call(name, args):
                         response = await session.call_tool(name, args)
                         self.assertFalse(getattr(response, "isError", getattr(response, "is_error", False)), response)
@@ -112,8 +135,16 @@ class ExamWorkflow(unittest.TestCase):
                     self.assertTrue(evidence["valid"], evidence)
                     saved = await call("save_exam_questions", {"plan_id": pid, "questions": [self.question()]})
                     self.assertEqual(saved["added"], 1)
+                    self.assertNotIn("plan", saved)                 # the reply no longer repeats the workspace
+                    self.assertEqual(saved["question_count"], 1)
+                    self.assertIn("uncited_source_paths", saved["coverage"])
                     read_plan = await call("exam_plans", {"plan_id": pid})
-                    self.assertEqual(read_plan["plan"]["questions"][0]["answer"], self.question()["answer"])
+                    self.assertNotIn("answer", read_plan["plan"]["questions"][0])
+                    self.assertEqual(read_plan["plan"]["questions"][0]["cites"][0]["locator"], "Page 1")
+                    full = await call("exam_plans", {"plan_id": pid, "question_ids": saved["question_ids"]})
+                    self.assertEqual(full["plan"]["question_details"][0]["answer"], self.question()["answer"])
+                    located = await call("exam_plans", {"plan_id": pid, "include_locators": True})
+                    self.assertTrue(any(s.get("locators") for s in located["plan"]["sources"]))
                     fabricated = self.question()
                     fabricated["citations"][0]["quote"] = "A invented claim never stated by the instructor."
                     rejected = await call("save_exam_questions", {"plan_id": pid, "questions": [fabricated]})
@@ -122,6 +153,8 @@ class ExamWorkflow(unittest.TestCase):
                     response = await session.call_tool("search_course_materials", {"query": "investment valuation", "course": self.folder,
                                                                                   "alternate_queries": ["net present value"]})
                     self.assertIn("Page 1", response.content[0].text)
+                    removed = await call("remove_exam_questions", {"plan_id": pid, "question_ids": saved["question_ids"]})
+                    self.assertEqual((removed["removed"], removed["question_count"]), (1, 0))
         asyncio.run(run())
 
 

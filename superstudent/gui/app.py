@@ -29,7 +29,7 @@ from .. import __version__
 from ..config import (APP_DIR, DEFAULTS, IS_MAC, delete_token, get_token, library_path, load_config,
                       normalize_canvas_url, save_config, set_token)
 from ..library import Library
-from ..util import atomic_write_json, fmt_dt, human_size, parse_dt, read_json
+from ..util import as_one_action, atomic_write_json, fmt_dt, human_size, parse_dt, read_json
 
 HERE = Path(__file__).resolve().parent
 INFO_FILE = APP_DIR / "app-window.json"
@@ -92,6 +92,7 @@ class App:
                 webbrowser.open(args[-1])
 
     # ------------------------------------------------------------------ state
+    @as_one_action
     def state(self) -> Dict[str, Any]:
         from ..assistants import claude_status, openai_status
         from ..extract import soffice_path, tesseract_available
@@ -667,6 +668,10 @@ class App:
                 self.lib(), b.get("course", ""), b.get("title", ""), modules=b.get("modules") or [],
                 exam_date=b.get("exam_date", ""), format=b.get("format", ""), scope_note=b.get("scope_note", "")),
             "POST /api/exam/reveal": lambda b, q: exams.reveal_question(self.lib(), b.get("plan_id", ""), b.get("question_id", "")),
+            "POST /api/exam/review-scope": lambda b, q: exams.review_scope(self.lib(), b.get("plan_id", "")),
+            "POST /api/exam/delete": lambda b, q: exams.delete_plan(self.lib(), b.get("plan_id", "")),
+            "POST /api/exam/remove-questions": lambda b, q: exams.remove_questions(
+                self.lib(), b.get("plan_id", ""), b.get("question_ids") or []),
             "POST /api/exam/attempt": lambda b, q: exams.record_attempt(
                 self.lib(), b.get("plan_id", ""), b.get("question_id", ""), answer=b.get("answer", ""),
                 choice_index=b.get("choice_index", -1), self_rating=b.get("self_rating", "")),

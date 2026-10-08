@@ -19,7 +19,8 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 from .describe import strip_blocks
 from .outline import NOTES_DIR, Doc, _load, course_documents, write_outline
-from .util import atomic_write_json, atomic_write_text, file_digest, front_matter, parse_front_matter, read_json
+from .util import (action_memo, as_one_action, atomic_write_json, atomic_write_text, cached_digest, front_matter, is_within,
+                   parse_front_matter, read_json, read_json_view, relative_posix, stat_signature)
 from .library import Library, LibraryPathError
 
 MIN_DOC, MIN_SUMMARY, MAX_CHARS = 150, 300, 200000
@@ -36,23 +37,44 @@ def load(lib) -> Dict[str, Dict[str, Any]]:
     return read_json(_store_path(lib), {}) or {}
 
 
+def load_view(lib) -> Dict[str, Dict[str, Any]]:
+    """The notes record for code that only reads it, reused until it changes. Never modify it."""
+    return read_json_view(_store_path(lib), {}) or {}
+
+
 def fingerprint(sidecar: Path, lib=None) -> str:
     """The document's content, ignoring its file name, title line and saved picture descriptions, so the same
     handout posted twice (or in two sections of a course) is recognised as the same."""
+    try:
+        sidecar = lib.checked(sidecar) if lib else sidecar
+        original = sidecar.with_name(sidecar.name[:-3])
+        original = lib.checked(original) if lib else original
+    except LibraryPathError:
+        return ""
+    memo = action_memo()
+    key = ("fingerprint", str(sidecar), str(lib.root) if lib else "")
+    signatures = (stat_signature(sidecar), stat_signature(original), stat_signature(lib.state_path) if lib else None)
+    if memo is not None and memo.get(key, (None,))[0] == signatures:      # already worked out in this action
+        return memo[key][1]
+    value = _fingerprint(sidecar, original, lib)
+    if memo is not None:
+        memo[key] = (signatures, value)
+    return value
+
+
+def _fingerprint(sidecar: Path, original: Path, lib) -> str:
     from .compact import for_index
 
     try:
-        sidecar = lib.checked(sidecar) if lib else sidecar
         meta, body = parse_front_matter(sidecar.read_text(encoding="utf-8"))
-        original = sidecar.with_name(sidecar.name[:-3])
-        original = lib.checked(original) if lib else original
-        source = file_digest(original) if original.suffix and original.is_file() else ""
+        source = ((lib.digest(original) if lib else cached_digest(original))
+                  if original.suffix and original.is_file() else "")
         if meta.get("source_file") and not source:
             source = "original missing"
         availability = meta.get("sync_status") or "current"
         if lib:
             from .index import material_status
-            status = material_status(lib, sidecar.relative_to(lib.root).as_posix())["status"]
+            status = material_status(lib, relative_posix(sidecar, lib.root))["status"]
             if status != "current":
                 availability = status
     except (OSError, UnicodeDecodeError, LibraryPathError):
@@ -62,8 +84,16 @@ def fingerprint(sidecar: Path, lib=None) -> str:
     return hashlib.sha256((body + "\n" + source + "\n" + availability).encode("utf-8")).hexdigest()
 
 
+_LIBRARIES: Dict[str, Library] = {}
+
+
 def _doc_fp(doc: Doc) -> str:
-    return fingerprint(doc.sidecar, Library(doc.root) if doc.root else None)
+    if not doc.root:
+        return fingerprint(doc.sidecar, None)
+    lib = _LIBRARIES.get(str(doc.root))
+    if lib is None:
+        lib = _LIBRARIES[str(doc.root)] = Library(doc.root)
+    return fingerprint(doc.sidecar, lib)
 
 
 def _sources(docs: List[Doc]) -> Dict[str, str]:
@@ -80,7 +110,7 @@ def course_dirs(lib, course: str = "") -> List[Tuple[Path, str]]:
     """[(course folder, label)] for courses in the library, optionally filtered by name, code or folder."""
     wanted = (course or "").strip().lower()
     out = []
-    for c in lib.load_state().get("courses", {}).values():
+    for c in lib.state_view().get("courses", {}).values():
         folder = c.get("folder")
         cdir = lib.resolve(folder) if folder else None
         if cdir is None or not cdir.is_dir():
@@ -94,7 +124,7 @@ def course_dirs(lib, course: str = "") -> List[Tuple[Path, str]]:
 
 def _course_of(lib, path: Path) -> Optional[Tuple[Path, str]]:
     for cdir, label in course_dirs(lib):
-        if path == cdir or cdir in path.parents:
+        if path == cdir or is_within(path, cdir):
             return cdir, label
     return None
 
@@ -176,8 +206,9 @@ def _summary_status(store: Dict[str, Any], key: str, docs: List[Doc]) -> str:
     return "done"
 
 
+@as_one_action
 def progress(lib, course: str = "", limit: int = 8) -> Dict[str, Any]:
-    store = load(lib)
+    store = load_view(lib)
     courses = []
     for cdir, label in course_dirs(lib, course):
         all_docs = course_documents(lib, cdir, include_light=True)
@@ -214,7 +245,7 @@ def progress(lib, course: str = "", limit: int = 8) -> Dict[str, Any]:
 
 
 def status_fn(lib):
-    store = load(lib)
+    store = load_view(lib)
     copies = _studied_copies(store)
 
     def status(rel: str) -> str:
@@ -328,7 +359,7 @@ def _save(lib, path: str, notes: str, by: str = "") -> Dict[str, Any]:
     atomic_write_json(_store_path(lib), store)
     try:
         write_outline(lib, cdir, label, status_fn(lib))
-        update_index(lib)
+        update_index(lib, wait=2)   # if a sync is writing the index, skip: the next index update includes this
     except Exception:
         pass
     message = f"Saved {kind} notes to {entry['file']}."

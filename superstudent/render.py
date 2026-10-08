@@ -8,7 +8,6 @@ from typing import List, Optional
 
 from .extract import IMAGE_EXT, PDFLIKE_EXT, VIEWABLE_IMAGE_EXT, assets_dir_for, office_pdf, soffice_path
 from .library import LibraryPathError
-from .util import file_digest
 
 OFFICE_EXT = {".pptx", ".ppt", ".pps", ".ppsx", ".odp", ".key", ".docx", ".doc", ".odt", ".rtf", ".xlsx", ".xls", ".ods"}
 TARGET_LONG_EDGE = 1500  # Claude works best with images up to roughly this size
@@ -27,7 +26,7 @@ def _original_for(path: Path) -> Path:
 
 
 def _converted_pdf(lib, source: Path) -> Optional[Path]:
-    digest = hashlib.sha1(f"{source}|{file_digest(source)}|v2".encode()).hexdigest()[:16]
+    digest = hashlib.sha1(f"{source}|{lib.digest(source)}|v2".encode()).hexdigest()[:16]
     cache = lib.checked(lib.meta / "converted")
     target = lib.checked(cache / f"{digest}.pdf")
     if target.exists():
@@ -70,7 +69,7 @@ def _fit_image(lib, source: Path) -> Path:
         orientation = im.getexif().get(0x0112, 1) if hasattr(im, "getexif") else 1
         if ext in VIEWABLE_IMAGE_EXT and max(im.size) <= MODEL_LONG_EDGE and orientation in (0, 1):
             return source
-        key = hashlib.sha1(f"{source}|{file_digest(source)}|fit2".encode()).hexdigest()[:16]
+        key = hashlib.sha1(f"{source}|{lib.digest(source)}|fit2".encode()).hexdigest()[:16]
         jpeg = ext in (".jpg", ".jpeg", ".heic", ".heif") or im.mode == "CMYK"
         out = lib.checked(lib.renders / f"{key}-fit{'.jpg' if jpeg else '.png'}")
         if not out.exists():
@@ -89,7 +88,7 @@ def _with_sips(lib, source: Path) -> Optional[Path]:
 
     if not shutil.which("sips"):
         return None
-    key = hashlib.sha1(f"{source}|{file_digest(source)}|sips".encode()).hexdigest()[:16]
+    key = hashlib.sha1(f"{source}|{lib.digest(source)}|sips".encode()).hexdigest()[:16]
     out = lib.checked(lib.renders / f"{key}-fit.jpg")
     if not out.exists():
         out.parent.mkdir(parents=True, exist_ok=True)
@@ -131,7 +130,7 @@ DRAWN_SUFFIX = "-drawn.png"   # slides drawn by Super Student itself (no LibreOf
 def _drawn_slide(lib, source: Path, page: int, long_edge: int) -> Path:
     from .slide_render import render_slide
 
-    key = hashlib.sha1(f"{source}|{file_digest(source)}|{page}|{long_edge}|v1".encode()).hexdigest()[:16]
+    key = hashlib.sha1(f"{source}|{lib.digest(source)}|{page}|{long_edge}|v1".encode()).hexdigest()[:16]
     out = lib.checked(lib.renders / f"{key}-s{page}{DRAWN_SUFFIX}")
     if out.exists():
         return out
@@ -189,7 +188,7 @@ def _render(lib, rel_path: str, page: int, long_edge: int) -> List[Path]:
                               "The text version and any saved images are still available.")
     else:
         raise RenderError(f"Can't render '{ext}' files as images.")
-    key = hashlib.sha1(f"{source}|{file_digest(source)}|{page}|{long_edge}".encode()).hexdigest()[:16]
+    key = hashlib.sha1(f"{source}|{lib.digest(source)}|{page}|{long_edge}".encode()).hexdigest()[:16]
     out = lib.checked(lib.renders / f"{key}-p{page}.png")
     if out.exists():
         return [out]

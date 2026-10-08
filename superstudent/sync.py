@@ -37,7 +37,7 @@ from urllib.parse import quote, unquote
 
 from .canvas import AuthError, Canvas, CanvasError, DownloadError, ForbiddenError, NotFoundError
 from .content import TOKEN_RE, YOUTUBE_RE, Refs, block_editor_html, html_text, html_to_markdown, platform_name
-from . import describe, notes
+from . import describe, exams, notes
 from .extract import EXTRACTOR_VERSION, MEDIA_EXT, extract, kind_of
 from .library import Library
 from .media import (Segment, Transcriber, TranscriberUnavailable, extract_keyframes, fmt_ts, media_duration, parse_captions,
@@ -105,6 +105,7 @@ class Syncer:
                         pass
                 self.lib.save_state(self.state)
             self.process_media()
+            self.carry_over()
             for cs in self.courses:
                 try:
                     cs.finish()
@@ -132,6 +133,18 @@ class Syncer:
             self.lib.log(f"sync ok: {len(self.courses)} courses, {self.cv.calls} API calls, "
                          f"{self.report['seconds']}s, errors={len(self.report['errors'])}")
         return self.report
+
+    def carry_over(self) -> None:
+        """Keep study notes and picture descriptions saved by older versions whose sources haven't changed."""
+        from . import carry_over
+        try:
+            notes, pictures = carry_over.study_notes(self.lib), carry_over.descriptions(self.lib)
+        except Exception as exc:          # never let this stop a sync: the work just stays marked outdated
+            self.report["errors"].append(f"Carrying over older study notes: {exc}")
+            return
+        if notes or pictures:
+            self.log(f"Kept {notes} study note record(s) and {pictures} picture description(s) from an older version")
+        self.report["carried_over"] = {"study_notes": notes, "descriptions": pictures}
 
     def list_courses(self) -> List[Dict[str, Any]]:
         wanted = self.cfg.get("courses", "active")
@@ -338,6 +351,10 @@ class CourseSync:
                 notes.move(self.s.lib, lib_old + ".md", lib_new + ".md")
         except Exception as exc:          # bookkeeping only; never stop a sync over it
             self.s.lib.log(f"couldn't move notes/descriptions for {lib_old}: {exc}")
+        try:
+            exams.move(self.s.lib, lib_old, lib_new)     # exam practice citing it follows it too
+        except Exception as exc:
+            self.s.lib.log(f"couldn't move exam practice for {lib_old}: {exc}")
         self._prune(self.dir / prev)
 
     def _prune(self, path: Path) -> None:
@@ -1386,7 +1403,8 @@ class CourseSync:
             original, sidecar = self.s.lib.checked(original), self.s.lib.checked(sidecar)
             meta, _ = parse_front_matter(sidecar.read_text(encoding="utf-8"))
             expected = meta.get("source_sha256")
-            if not expected or expected != file_digest(original):
+            # Reuses the fingerprint while the original is untouched (any write changes its signature).
+            if not expected or expected != self.s.lib.digest(original):
                 return False
             if meta.get("type") == "archive":
                 directory = self.s.lib.checked(original.parent / (original.name + " (unzipped)"))
@@ -1675,6 +1693,12 @@ class CourseSync:
             out_meta, _ = parse_front_matter(out.read_text(encoding="utf-8"))
             needs_binding = bool(out_meta.get("source_file") or out_meta.get("source_sha256"))
         binding_current = not needs_binding or self._extraction_current(original, out)
+        if not binding_current and out.is_file() and original.is_file():
+            # A transcript made before 1.7.0 isn't bound to its recording; bind it rather than transcribe again
+            # when the recording is provably the one transcribed (see carry_over.bind_transcript).
+            from .carry_over import bind_transcript
+            binding_current = (bind_transcript(self.s.lib, original, out, it, job.get("stamp"))
+                               and self._extraction_current(original, out))
         if (it.get("status") == "ok" and not it.get("stale") and out.exists()
                 and it.get("stamp") == job.get("stamp") and binding_current):
             job["done"] = True

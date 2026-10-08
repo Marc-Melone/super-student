@@ -8,10 +8,13 @@ from __future__ import annotations
 
 import re
 import sqlite3
+import threading
+from collections import OrderedDict
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
-from .util import REMOVED_DIR, parse_front_matter
+from .util import (REMOVED_DIR, as_one_action, cached_digest, front_matter_view, parse_front_matter, settled,
+                   stat_signature)
 
 INDEX_VERSION = 3
 SKIP_NAMES = {"INDEX.md", "CLAUDE.md", "AGENTS.md", "README.md"}
@@ -34,7 +37,7 @@ KIND_ALIASES["feedback"] = ["grades", "assignment", "feedback"]
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta(key TEXT PRIMARY KEY, value TEXT);
 CREATE TABLE IF NOT EXISTS docs(path TEXT PRIMARY KEY, course TEXT, kind TEXT, title TEXT, mtime REAL, size INTEGER,
-                               source_version TEXT);
+                               source_version TEXT, source_stat TEXT);
 CREATE VIRTUAL TABLE IF NOT EXISTS chunks USING fts5(
     text, title, locator UNINDEXED, path UNINDEXED, course UNINDEXED, kind UNINDEXED, chunk UNINDEXED,
     doc_title UNINDEXED, tokenize = 'porter unicode61 remove_diacritics 2'
@@ -42,9 +45,10 @@ CREATE VIRTUAL TABLE IF NOT EXISTS chunks USING fts5(
 """
 
 
-def connect(db_path: Path) -> sqlite3.Connection:
+def connect(db_path: Path, timeout: float = 30) -> sqlite3.Connection:
+    """A connection for updating the index. `timeout` is how long to wait while another process writes."""
     db_path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(db_path), timeout=30)
+    conn = sqlite3.connect(str(db_path), timeout=timeout)
     conn.execute("PRAGMA journal_mode=WAL")
     conn.executescript(SCHEMA)
     row = conn.execute("SELECT value FROM meta WHERE key='version'").fetchone()
@@ -53,16 +57,74 @@ def connect(db_path: Path) -> sqlite3.Connection:
         conn.executescript(SCHEMA)
         conn.execute("INSERT OR REPLACE INTO meta(key, value) VALUES('version', ?)", (str(INDEX_VERSION),))
         conn.commit()
-    if "source_version" not in {r[1] for r in conn.execute("PRAGMA table_info(docs)")}:
-        conn.execute("ALTER TABLE docs ADD COLUMN source_version TEXT")
-        conn.commit()
+    columns = {r[1] for r in conn.execute("PRAGMA table_info(docs)")}
+    for column in ("source_version", "source_stat"):
+        if column not in columns:
+            conn.execute(f"ALTER TABLE docs ADD COLUMN {column} TEXT")
+            conn.commit()
     return conn
 
 
-def _connect(lib) -> sqlite3.Connection:
+def _index_paths(lib) -> Path:
     for suffix in ("", "-wal", "-shm", "-journal"):
         lib.checked(Path(str(lib.index_path) + suffix))
-    return connect(lib.checked(lib.index_path))
+    return lib.checked(lib.index_path)
+
+
+def _connect(lib, timeout: float = 30) -> sqlite3.Connection:
+    return connect(_index_paths(lib), timeout=timeout)
+
+
+def _reader(lib) -> Optional[sqlite3.Connection]:
+    """A connection that only reads. Searching and listing never change the index, so they never wait for
+    (or hold up) a sync that is updating it: readers see the last saved version while a sync writes."""
+    path = _index_paths(lib)
+    if not path.exists():
+        return None
+    conn = sqlite3.connect(str(path), timeout=5)
+    try:
+        conn.execute("PRAGMA query_only = ON")
+        row = conn.execute("SELECT value FROM meta WHERE key='version'").fetchone()
+    except sqlite3.DatabaseError:
+        conn.close()
+        return None
+    if not row or row[0] != str(INDEX_VERSION):      # an older index: the next sync rebuilds it
+        conn.close()
+        return None
+    return conn
+
+
+
+
+def _described_original(lib, sidecar: Path, descriptions: Dict[str, Any]) -> Tuple[bool, Optional[Path]]:
+    """(whether the text version's original has saved picture descriptions, the original if it exists)."""
+    original_rel = lib.checked(sidecar).relative_to(lib.root).as_posix()[:-3]
+    original = lib.resolve(original_rel)
+    if original is not None:
+        original_rel = original.relative_to(lib.root).as_posix()
+    return original_rel in descriptions, original
+
+
+def _source_version(original: Optional[Path], previous: Tuple[str, str] = ("", ""), lib=None) -> Tuple[str, str]:
+    """(digest, signature) of a described original. A digest recorded with the same signature is reused: the
+    file hasn't been written since it was read (see util.settled). A signature is only recorded if the file had
+    settled when it was read, so a file written moments ago is checked again next time."""
+    if original is None or not original.is_file():
+        return "missing", ""
+    signature = stat_signature(original)
+    if signature is None:
+        return "unavailable", ""
+    text = ":".join(str(part) for part in signature)
+    ready = settled(signature)                         # judged before reading
+    if ready and previous[0] and previous[1] == text and previous[0] not in ("missing", "unavailable"):
+        return previous[0], text
+    try:
+        digest = lib.digest(original) if lib is not None else cached_digest(original)
+    except OSError:
+        return "unavailable", ""
+    if stat_signature(original) != signature:          # written while it was read: don't trust either
+        return "unavailable", ""
+    return digest, (text if ready else "")
 
 
 def _course_of(rel: str) -> str:
@@ -164,19 +226,22 @@ def chunk_markdown(body: str, max_chars: int = 1800, target: int = 1200) -> List
 TEXT_VERSION = "4"   # bump when the indexed text changes shape, so every document is re-read once
 
 
-def update_index(lib, log: Optional[Callable[[str], None]] = None, full: bool = False) -> Dict[str, int]:
+def update_index(lib, log: Optional[Callable[[str], None]] = None, full: bool = False,
+                 wait: float = 30) -> Dict[str, int]:
+    """Bring the index up to date with the library. `wait` is how long to wait for a sync that is updating it
+    at the same time; a quick refresh after saving notes passes a short wait and skips if the index is busy."""
     from .compact import for_index
     from . import describe
-    from .util import file_digest
 
-    conn = _connect(lib)
-    descriptions = describe.load(lib)
+    conn = _connect(lib, timeout=wait)
+    descriptions = describe.load_view(lib)
     row = conn.execute("SELECT value FROM meta WHERE key = 'text_version'").fetchone()
     if not row or row[0] != TEXT_VERSION:
         full = True
         with conn:
             conn.execute("INSERT OR REPLACE INTO meta(key, value) VALUES ('text_version', ?)", (TEXT_VERSION,))
-    known = {row[0]: (row[1], row[2], row[3]) for row in conn.execute("SELECT path, mtime, size, source_version FROM docs")}
+    known = {row[0]: (row[1], row[2], row[3] or "", row[4] or "")
+             for row in conn.execute("SELECT path, mtime, size, source_version, source_stat FROM docs")}
     present = set()
     added = updated = removed = 0
     with conn:
@@ -186,19 +251,18 @@ def update_index(lib, log: Optional[Callable[[str], None]] = None, full: bool = 
             try:
                 resolved = lib.checked(path)
                 st = path.stat()
+                # Picture descriptions are tied to the original's exact bytes, which can change without the text
+                # version changing: record which original the indexed descriptions were checked against.
+                source_version = source_stat = ""
+                described, original = _described_original(lib, resolved, descriptions)
+                if described:
+                    previous = ("", "") if full else known.get(rel, (0, 0, "", ""))[2:]
+                    source_version, source_stat = _source_version(original, previous, lib)
             except (OSError, ValueError):
                 continue
-            source_version = ""
-            original_rel = resolved.relative_to(lib.root).as_posix()[:-3]
-            original = lib.resolve(original_rel)
-            if original is not None:
-                original_rel = original.relative_to(lib.root).as_posix()
-            if original_rel in descriptions:
-                try:
-                    source_version = file_digest(original) if original and original.is_file() else "missing"
-                except OSError:
-                    source_version = "unavailable"
-            if not full and rel in known and known[rel] == (st.st_mtime, st.st_size, source_version):
+            if not full and rel in known and known[rel][:3] == (st.st_mtime, st.st_size, source_version):
+                if known[rel][3] != source_stat:
+                    conn.execute("UPDATE docs SET source_stat = ? WHERE path = ?", (source_stat, rel))
                 continue
             try:
                 text = describe.reading_text(lib, path, path.read_text(encoding="utf-8"))
@@ -217,8 +281,9 @@ def update_index(lib, log: Optional[Callable[[str], None]] = None, full: bool = 
                     for i, (loc, chunk) in enumerate(chunk_markdown(for_index(body)))]
             conn.executemany("INSERT INTO chunks(text, title, locator, path, course, kind, chunk, doc_title) "
                              "VALUES (?,?,?,?,?,?,?,?)", rows)
-            conn.execute("INSERT OR REPLACE INTO docs(path, course, kind, title, mtime, size, source_version) VALUES (?,?,?,?,?,?,?)",
-                         (rel, course, kind, title, st.st_mtime, st.st_size, source_version))
+            conn.execute("INSERT OR REPLACE INTO docs(path, course, kind, title, mtime, size, source_version, source_stat) "
+                         "VALUES (?,?,?,?,?,?,?,?)",
+                         (rel, course, kind, title, st.st_mtime, st.st_size, source_version, source_stat))
             if rel in known:
                 updated += 1
             else:
@@ -259,6 +324,7 @@ def _terms(query: str) -> Tuple[List[str], List[str]]:
     return fts, cleaned
 
 
+@as_one_action
 def search(lib, query: str, course: str = "", kind: str = "", limit: int = 10, per_doc: int = 3,
            markers: tuple = ("**", "**"), alternate_queries: Optional[List[str]] = None) -> List[Dict[str, Any]]:
     """Search literal course text, optionally combining up to four alternate phrasings.
@@ -267,6 +333,11 @@ def search(lib, query: str, course: str = "", kind: str = "", limit: int = 10, p
     own candidate pool before reciprocal-rank fusion, so a broad partial match cannot fill the result limit
     before a useful alternate is searched. Complete-term matches rank before partial matches, with the
     existing current-before-removed ordering and per-document cap applied after fusion.
+
+    Search only reads the index, so it never waits for (or holds up) a sync that is updating it. A document
+    that changed after it was indexed, including an original whose saved picture descriptions no longer
+    match it, is checked against its current reading text: the hit is kept, with a fresh snippet, only if
+    that section still matches.
     """
     if alternate_queries is not None and (not isinstance(alternate_queries, list) or len(alternate_queries) > 4 or
             any(not isinstance(q, str) or not q.strip() or len(q) > 512 for q in alternate_queries)):
@@ -286,10 +357,12 @@ def search(lib, query: str, course: str = "", kind: str = "", limit: int = 10, p
             seen_terms.add(key)
     if not query_terms:
         return []
-    if describe.load(lib):
-        update_index(lib)  # visual originals can change without changing the sidecar's mtime or size
-    conn = _connect(lib)
-    state = lib.load_state()
+    conn = _reader(lib)
+    if conn is None:
+        return []
+    descriptions = describe.load_view(lib)
+    current_text = _CurrentText(lib, markers)
+    state = lib.state_view()
     filters = []
     params: List[Any] = []
     if course:
@@ -312,6 +385,7 @@ def search(lib, query: str, course: str = "", kind: str = "", limit: int = 10, p
            " ORDER BY bm25(chunks, 1.0, 3.0) LIMIT ?")
     candidates: Dict[Tuple[str, str, int], Dict[str, Any]] = {}
     candidate_limit = min(800, max(32, limit * 8))
+    results: List[Dict[str, Any]] = []
     try:
         for phrasing, fts in query_terms:
             strategies = [(" AND ".join(fts), True)]
@@ -327,81 +401,218 @@ def search(lib, query: str, course: str = "", kind: str = "", limit: int = 10, p
                     key = (path, locator, chunk)
                     if key in query_seen:
                         continue
-                    target = lib.resolve(path)
-                    if target is None or not target.is_file():
-                        continue
                     query_seen.add(key)
                     hit = candidates.get(key)
                     if hit is None:
                         hit = {"path": path, "title": title, "locator": locator, "course": crs, "kind": knd,
                                "snippet": re.sub(r"\s+", " ", snip).strip(), "score": round(-score, 3),
                                "match": "all words" if complete else "some words", "removed": is_removed(path),
-                               "retrieval_score": 0.0, "matched_queries": []}
+                               "retrieval_score": 0.0, "matched_queries": [], "_matches": set()}
                         candidates[key] = hit
                     elif complete and hit["match"] != "all words":
                         hit.update(match="all words", snippet=re.sub(r"\s+", " ", snip).strip(),
                                    score=round(-score, 3))
                     hit["retrieval_score"] += (1.0 if complete else 0.35) / (60 + rank)
                     hit["matched_queries"].append(phrasing)
+                    hit["_matches"].add((match, complete))
+        # What's currently in the course comes first; copies of things removed from Canvas come after, labeled.
+        ranked = sorted(candidates.values(), key=lambda r: (r["removed"], r["match"] != "all words",
+                                                           -r["retrieval_score"]))
+        entries = _IndexEntries(conn)
+        status: Dict[str, Tuple[Optional[Path], bool]] = {}     # path -> (current text version, index current)
+        per_path: Dict[str, int] = {}
+        for hit in ranked:
+            path = hit["path"]
+            if per_path.get(path, 0) >= per_doc:
+                continue
+            if path not in status:
+                sidecar = lib.resolve(path)
+                if sidecar is None or not sidecar.is_file():
+                    status[path] = (None, False)
+                else:
+                    try:
+                        status[path] = (sidecar, _entry_current(lib, sidecar, entries.get(path), descriptions))
+                    except (OSError, ValueError):
+                        status[path] = (None, False)
+            sidecar, fresh = status[path]
+            if sidecar is None or (not fresh and not current_text.matches(sidecar, path, hit)):
+                continue
+            per_path[path] = per_path.get(path, 0) + 1
+            hit.pop("_matches", None)
+            hit["retrieval_score"] = round(hit["retrieval_score"], 6)
+            hit.update(material_status(lib, path, state))
+            results.append(hit)
+            if len(results) >= limit:
+                break
     finally:
         conn.close()
-    # What's currently in the course comes first; copies of things removed from Canvas come after, labeled.
-    ranked = sorted(candidates.values(), key=lambda r: (r["removed"], r["match"] != "all words",
-                                                       -r["retrieval_score"]))
-    results: List[Dict[str, Any]] = []
-    per_path: Dict[str, int] = {}
-    for hit in ranked:
-        if per_path.get(hit["path"], 0) >= per_doc:
-            continue
-        per_path[hit["path"]] = per_path.get(hit["path"], 0) + 1
-        hit["retrieval_score"] = round(hit["retrieval_score"], 6)
-        hit.update(material_status(lib, hit["path"], state))
-        results.append(hit)
-        if len(results) >= limit:
-            break
+        current_text.close()
     return results
+
+
+class _IndexEntries:
+    """What the index recorded about each document when it was last indexed."""
+
+    def __init__(self, conn: sqlite3.Connection):
+        columns = {r[1] for r in conn.execute("PRAGMA table_info(docs)")}
+        version = "source_version" if "source_version" in columns else "''"
+        stat = "source_stat" if "source_stat" in columns else "''"
+        self.sql = f"SELECT mtime, size, {version}, {stat} FROM docs WHERE path = ?"
+        self.conn = conn
+
+    def get(self, path: str) -> Optional[Tuple[float, int, str, str]]:
+        row = self.conn.execute(self.sql, (path,)).fetchone()
+        return (row[0], row[1], row[2] or "", row[3] or "") if row else None
+
+
+def _entry_current(lib, sidecar: Path, entry, descriptions: Dict[str, Any]) -> bool:
+    """Whether the indexed copy still matches the files: the text version (size and time) and, for a document
+    with saved picture descriptions, the original those descriptions were checked against when indexed."""
+    if entry is None:
+        return False
+    st = sidecar.stat()
+    if (st.st_mtime, st.st_size) != (entry[0], entry[1]):
+        return False
+    described, original = _described_original(lib, sidecar, descriptions)
+    recorded = entry[2]
+    if not described:
+        return not recorded                  # descriptions indexed for it no longer apply
+    return bool(recorded) and _source_version(original, (recorded, entry[3]), lib)[0] == recorded
+
+
+class _CurrentText:
+    """The current reading text of documents whose index entry is behind the files (obsolete picture
+    descriptions left out, as when reading), searchable the same way as the index."""
+
+    def __init__(self, lib, markers: tuple):
+        self.lib, self.markers = lib, markers
+        self.tables: Dict[str, Optional[sqlite3.Connection]] = {}
+
+    def _table(self, sidecar: Path, path: str) -> Optional[sqlite3.Connection]:
+        if path in self.tables:
+            return self.tables[path]
+        from . import describe
+        from .compact import for_index
+        table = None
+        try:
+            text = describe.reading_text(self.lib, sidecar, sidecar.read_text(encoding="utf-8"))
+            meta, body = parse_front_matter(text)
+            if meta.get("type") != "outline":
+                title = meta.get("title") or Path(path).stem
+                table = sqlite3.connect(":memory:")
+                table.execute("CREATE VIRTUAL TABLE t USING fts5(text, title, locator UNINDEXED, chunk UNINDEXED, "
+                              "tokenize = 'porter unicode61 remove_diacritics 2')")
+                table.executemany("INSERT INTO t(text, title, locator, chunk) VALUES (?,?,?,?)",
+                                  [(chunk, title if i == 0 else "", loc, i)
+                                   for i, (loc, chunk) in enumerate(chunk_markdown(for_index(body)))])
+        except (OSError, UnicodeDecodeError, ValueError, sqlite3.Error):
+            table = None
+        self.tables[path] = table
+        return table
+
+    def matches(self, sidecar: Path, path: str, hit: Dict[str, Any]) -> bool:
+        table = self._table(sidecar, path)
+        if table is None:
+            return False
+        for match, complete in sorted(hit.get("_matches") or (), key=lambda m: not m[1]):
+            try:
+                row = table.execute("SELECT snippet(t, 0, ?, ?, ' … ', 48) FROM t WHERE t MATCH ? AND locator = ? "
+                                    "ORDER BY bm25(t, 1.0, 3.0) LIMIT 1",
+                                    (self.markers[0], self.markers[1], match, hit["locator"])).fetchone()
+            except sqlite3.OperationalError:
+                continue
+            if row:
+                hit.update(snippet=re.sub(r"\s+", " ", row[0]).strip(), match="all words" if complete else "some words")
+                return True
+        return False
+
+    def close(self) -> None:
+        for table in self.tables.values():
+            if table is not None:
+                table.close()
 
 
 def is_removed(path: str) -> bool:
     return f"/{REMOVED_DIR}/" in f"/{path}"
 
 
+_LOOKUPS: "OrderedDict[int, tuple]" = OrderedDict()     # id(course record view) -> (view, paths, pictures)
+_LOOKUPS_LOCK = threading.Lock()
+
+
+def _build_lookup(state) -> Tuple[Dict[str, list], Dict[str, list]]:
+    """Every record item by its paths, and by its pictures folder: path -> [(course position, item position,
+    item)] in record order."""
+    paths_of: Dict[str, list] = {}
+    assets_of: Dict[str, list] = {}
+    for c_index, course in enumerate(state.get("courses", {}).values()):
+        folder = course.get("folder") or ""
+        for i_index, item in enumerate((course.get("items") or {}).values()):
+            paths = {folder + "/" + p for p in (item.get("path"), item.get("text")) if p}
+            paths.update(p + ".md" for p in list(paths) if not p.endswith(".md"))
+            entry = (c_index, i_index, item)
+            for path in paths:
+                paths_of.setdefault(path, []).append(entry)
+            for prefix in {p[:-3] + ".assets/" if p.endswith(".md") else p + ".assets/" for p in paths}:
+                assets_of.setdefault(prefix, []).append(entry)
+    return paths_of, assets_of
+
+
+def _view_lookup(view) -> Tuple[Dict[str, list], Dict[str, list]]:
+    """The lookup for the shared course record view, built once per version of the record."""
+    with _LOOKUPS_LOCK:
+        hit = _LOOKUPS.get(id(view))
+        if hit is not None and hit[0] is view:
+            return hit[1], hit[2]
+    lookup = _build_lookup(view)
+    with _LOOKUPS_LOCK:
+        _LOOKUPS[id(view)] = (view, *lookup)       # holding the view keeps its id from being reused
+        while len(_LOOKUPS) > 4:
+            _LOOKUPS.popitem(last=False)
+    return lookup
+
+
+def _record_items(lib, rel: str, state=None) -> List[Dict[str, Any]]:
+    """The record items describing a library path (the file, its text version or a picture saved from it): in
+    each course, the first matching item, in record order."""
+    view = lib.state_view()
+    paths_of, assets_of = _view_lookup(view) if state is None or state is view else _build_lookup(state)
+    matches = list(paths_of.get(rel, ()))
+    at = rel.find(".assets/")
+    while at >= 0:                       # a path inside a pictures folder belongs to the file the folder is for
+        matches.extend(assets_of.get(rel[:at + len(".assets/")], ()))
+        at = rel.find(".assets/", at + 1)
+    first: Dict[int, Tuple[int, Dict[str, Any]]] = {}
+    for c_index, i_index, item in matches:
+        if c_index not in first or i_index < first[c_index][0]:
+            first[c_index] = (i_index, item)
+    return [first[c_index][1] for c_index in sorted(first)]
+
+
 def material_status(lib, rel: str, state=None) -> Dict[str, Any]:
-    """Carry known source availability into every reading surface, including saved notes."""
+    """Carry known source availability into every reading surface, including saved notes. Without `state`, the
+    shared course record view is used, looked up through a table built once per version of the record."""
     result = {"status": "current", "stale": False, "last_successful_sync": "",
               "last_successful_version": "", "message": ""}
     if is_removed(rel):
         return {**result, "status": "removed", "stale": True,
                 "message": "Historical copy: removed from Canvas; check current course material."}
-    state = lib.load_state() if state is None else state
     sidecar_rel = rel if rel.endswith(".md") else rel + ".md"
     if ".assets/" in rel:
         sidecar_rel = rel.split(".assets/", 1)[0] + ".md"
-    for course in state.get("courses", {}).values():
-        folder = course.get("folder") or ""
-        for item in (course.get("items") or {}).values():
-            paths = {folder + "/" + p for p in (item.get("path"), item.get("text")) if p}
-            paths.update(p + ".md" for p in list(paths) if not p.endswith(".md"))
-            assets = {p[:-3] + ".assets/" if p.endswith(".md") else p + ".assets/" for p in paths}
-            if rel not in paths and not any(rel.startswith(p) for p in assets):
-                continue
-            result.update(last_successful_sync=item.get("last_successful_sync") or "",
-                          last_successful_version=item.get("successful_stamp") or item.get("stamp") or "")
-            status = item.get("status")
-            if status == "locked" or item.get("locked"):
-                result.update(status="restricted", stale=True,
-                              message="Historical copy: Canvas now marks this file locked or restricted. Do not treat it as current.")
-            elif status in ("failed", "too_large", "pending") or item.get("stale"):
-                result.update(status="stale", stale=True,
-                              message="This source is not up to date: its latest download failed or is pending. Check Canvas before relying on it.")
-            break
+    for item in _record_items(lib, rel, state):
+        result.update(last_successful_sync=item.get("last_successful_sync") or "",
+                      last_successful_version=item.get("successful_stamp") or item.get("stamp") or "")
+        status = item.get("status")
+        if status == "locked" or item.get("locked"):
+            result.update(status="restricted", stale=True,
+                          message="Historical copy: Canvas now marks this file locked or restricted. Do not treat it as current.")
+        elif status in ("failed", "too_large", "pending") or item.get("stale"):
+            result.update(status="stale", stale=True,
+                          message="This source is not up to date: its latest download failed or is pending. Check Canvas before relying on it.")
     sidecar = lib.resolve(sidecar_rel)
     if sidecar is not None and sidecar.is_file():
-        try:
-            meta, _ = parse_front_matter(sidecar.read_text(encoding="utf-8"))
-        except (OSError, UnicodeDecodeError):
-            meta = {}
-        marker = meta.get("sync_status")
+        marker = front_matter_view(sidecar).get("sync_status")
         if marker == "restricted":
             result.update(status="restricted", stale=True,
                           message="Historical copy: Canvas now marks this source locked or restricted. Do not treat it as current.")
@@ -411,7 +622,7 @@ def material_status(lib, rel: str, state=None) -> Dict[str, Any]:
     if "/Study Notes/" in "/" + rel:
         from . import notes
         from .outline import course_documents
-        store = notes.load(lib)
+        store = notes.load_view(lib)
         for source, entry in store.items():
             if entry.get("file") != rel:
                 continue
@@ -450,7 +661,7 @@ def course_folders(lib, course: str) -> List[str]:
     want = _simple(course)
     if not want:
         return []
-    registered = lib.load_state().get("courses", {})
+    registered = lib.state_view().get("courses", {})
     exact = [c["folder"] for c in registered.values() if c.get("folder") == course]
     if exact:
         return list(dict.fromkeys(exact))
@@ -466,10 +677,13 @@ def _like_prefix(folder: str) -> str:
     return folder.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "/%"
 
 
+@as_one_action
 def list_documents(lib, course: str = "", kind: str = "") -> List[Dict[str, Any]]:
     if not lib.index_path.exists():
         return []
-    conn = _connect(lib)
+    conn = _reader(lib)
+    if conn is None:
+        return []
     sql = "SELECT path, course, kind, title FROM docs WHERE 1=1"
     params: List[Any] = []
     if course:

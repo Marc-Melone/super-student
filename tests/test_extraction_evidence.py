@@ -168,6 +168,31 @@ class ExtractionEvidenceTests(unittest.TestCase):
         self.assert_bound(original, NEW)
         self.assertFalse(self.evidence(original, OLD)["valid"])
 
+    def test_exam_practice_follows_a_file_that_sync_moves(self):
+        from superstudent import exams
+        original = self.canvas_file()
+        self.lib.save_state(self.syncer.state)
+        plan = exams.create_plan(self.lib, self.cs.folder, "Midterm")
+        self.assertTrue(plan["ok"], plan)
+        old_rel = original.relative_to(self.lib.root).as_posix() + ".md"
+        question = {"topic": "Rates", "prompt": "Which rate discounts the cash flows?", "type": "mcq",
+                    "choices": ["The old rate", "A market rate"], "correct_index": 0, "answer": "The old rate",
+                    "explanation": "The lecture says so.", "difficulty": "recall",
+                    "citations": [{"path": old_rel, "locator": original.name, "quote": OLD}]}
+        saved = exams.save_questions(self.lib, plan["plan"]["id"], [question])
+        self.assertTrue(saved["ok"], saved)
+        qid = saved["question_ids"][0]
+        self.assertTrue(exams.record_attempt(self.lib, plan["plan"]["id"], qid, choice_index=0)["ok"])
+        new_rel = "Modules/01 - Week 1/Lecture.txt"         # the instructor put it in a module
+        self.cs.relocate("file:7", new_rel)
+        self.cs.items["file:7"].update(path=new_rel, text=new_rel + ".md")
+        self.lib.save_state(self.syncer.state)
+        public = exams.get_plan(self.lib, plan["plan"]["id"])["plan"]
+        self.assertEqual(public["questions"][0]["status"], "current", public["questions"][0]["status_errors"])
+        self.assertEqual(public["questions"][0]["citations"][0]["path"], f"{self.cs.folder}/{new_rel}.md")
+        self.assertEqual(public["metrics"]["first_attempt_mcq_count"], 1)
+        self.assertFalse(public["scope_changed"], public["scope_warnings"])
+
     def test_canvas_valid_binding_reuses_existing_extraction(self):
         original = self.canvas_file()
         with patch("superstudent.sync.extract", wraps=real_extract) as extraction:

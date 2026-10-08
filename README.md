@@ -9,9 +9,11 @@ unapproved MCP integrations. This scope statement does not establish approval fo
 
 **Version 1.7.0 adds saved exam practice and scheduled review, and includes the security and source-freshness fixes.** Replace the older app with this version
 and reopen it to update its private runtime. Then restart ChatGPT and Claude so their connectors use the
-updated code. Your course library and settings are kept. Older visual descriptions and study notes may
-need to be recreated because source changes are now checked more strictly. Run **Update now** once after
-upgrading to rebuild older extracted files before generating exam practice.
+updated code. Your course library and settings are kept. Run **Update now** once after upgrading: it
+rebuilds older extracted files before generating exam practice, and keeps the study notes, picture
+descriptions and recording transcripts made by an older version whose files haven't changed since. Those
+that can't be shown to match (the text changed, the file was replaced, or a picture was described on the
+same day its file arrived) are marked outdated and need making again.
 
 Turns your Canvas courses into a study library your AI can actually use, with **Claude** or **ChatGPT**
 (Work, Chat and Codex). It pulls everything you can see in Canvas onto your Mac, keeps it up to date on
@@ -57,6 +59,19 @@ saved AI answer key; written answers show a worked answer for your own assessmen
 rise to the top, with saved attempts and a simple spaced review schedule. Changed, removed or restricted
 sources disable affected practice until new questions are generated. Your library stays local.
 
+A workspace follows its modules as the course changes. Material added to them later can be practiced right
+away, and a renamed, reordered or inserted module doesn't change what you selected or lose your practice.
+The workspace lists sources added, changed or removed since you last reviewed them; **Mark sources as
+reviewed** clears the list once you've looked. A picture description saved later doesn't count as a change.
+**Remove** takes out a question whose answer key or wording looks wrong, with its attempts, and **Delete
+workspace** removes a workspace you no longer need. A multiple-choice question is rejected when its written
+answer names a different choice than its answer key, which catches a miscounted key.
+
+Coverage counts study sources (lectures, readings, recordings, module pages and past quiz questions).
+Announcements, assignments, discussions, the syllabus and other pages stay in the workspace for scope and
+exam hints, but aren't counted as gaps. A quotation may use straight or curly quotes and dashes, and a
+titled slide or page can be cited by its number alone ("Slide 7").
+
 Extracted text is tied to the exact original file used during conversion. Older extracted files need one
 update to establish that link. A changed original or source ZIP blocks its previous text from supplying
 new practice until conversion completes again.
@@ -66,7 +81,9 @@ in current local source text, **not** that an AI answer is logically correct. Se
 supplied alternate phrasings; it does not use embeddings or automatically search by meaning. The app still
 uses your external assistant to create questions and explain new topics.
 
-First-attempt quiz performance, self-assessment, and saved source-note coverage are separate. None is proof
+Quiz accuracy is shown for each question's first try and its latest try, so review progress shows; a try
+made after viewing the answer first isn't counted. Quiz performance, self-assessment, and saved source-note
+coverage are separate. None is proof
 of mastery or a prediction of an exam grade. No comparative answer-quality or learning study against
 NotebookLM has been completed. Run the authored retrieval/evidence benchmark described in
 [benchmarks/README.md](benchmarks/README.md) to reproduce the limited offline checks.
@@ -140,6 +157,14 @@ results and connector readings. Newly locked files receive a restricted-content 
 has not changed their timestamp or size. These copies are left out of exam intel and the study pass.
 Successful retrieval clears the warning. Picture descriptions and study-note summaries are checked against
 the current source content; older records without source hashes need to be reviewed and saved again.
+
+These checks are quick: a file that hasn't been touched since it was last checked isn't read again. Super
+Student recognizes an untouched file by its size and dates, including the change date the system updates on
+every write (other apps can't set it back), and keeps fingerprints of checked originals in
+`~/SuperStudent/.superstudent/fingerprints.json`, so opening the app doesn't re-read every course file. A
+file written in the last few seconds is always read again. On a drive that doesn't keep change dates (an
+external drive formatted as FAT or exFAT), every check reads the files again: slower, just as strict. The
+fingerprint file is only a shortcut; if it's missing or damaged, files are simply read again.
 
 ## Install the Mac app (no Terminal needed)
 
@@ -401,12 +426,18 @@ access token in Canvas (Account → Settings → Approved Integrations).
   safe download staging, stale/restricted sources, interrupted syncs, content hashes and derived-note freshness.
   It uses temporary libraries, dummy credentials and local test servers; it never contacts a real Canvas account.
 - `python tests/test_exam_retrieval.py` checks alternate-query search, exact course boundaries, source quotations,
-  unique locators, fingerprints, and evidence-cache invalidation.
+  unique locators, fingerprints, evidence-cache invalidation, and that search answers while a sync is writing
+  the index.
 - `python tests/test_exams.py` checks exam scope, hidden answers, scoring, self-assessment, scheduled review,
-  stale sources, and safe local storage.
+  stale sources, safe local storage, workspaces following course changes, removal, and answer-key checks.
 - `python tests/test_exam_workflow.py` checks the exam workflow through the real local HTTP and MCP interfaces.
 - `python tests/test_extraction_evidence.py` checks conversion provenance, unchanged-timestamp edits, ZIP
   member refresh and recording refresh using temporary files and mocked downloads/transcription.
+- `python tests/test_freshness_cache.py` checks that the quicker freshness checks are just as strict: an
+  original replaced by same-size content with its old date put back is still caught, files written moments
+  ago (or still changing when they were read) are read again, drives without change dates are never trusted,
+  saved fingerprints are reused only while files are untouched, and the course-record lookup gives the same
+  answers as a full scan. It also checks that unchanged files really are read only once.
 - `python benchmarks/exam_retrieval.py --require-improvement` runs the authored offline retrieval/evidence
   benchmark. Its limits are described in [benchmarks/README.md](benchmarks/README.md).
 

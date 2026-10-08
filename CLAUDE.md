@@ -16,6 +16,45 @@ study them like someone who studied every slide: everything is converted to text
 
 ## Status (8 Oct 2026)
 
+- Unreleased fixes on top of 1.7.0, not yet packaged (bump to 1.7.1 and rebuild the Mac download to ship them):
+  - Search only reads the index again, so it answers while a sync writes it and no longer re-indexes or
+    hashes originals on every search. Hits from documents changed since indexing (including originals whose
+    saved picture descriptions no longer match) are checked against the current reading text. Saving a
+    picture description or study notes skips the index refresh if a sync is writing (`update_index(wait=2)`).
+  - Exam workspaces follow the course: selected modules are kept by Canvas id; material added to them can
+    be practiced at once; sync carries citations along when it moves files (`exams.move` in `_move_files`);
+    source fingerprints leave out paths, front matter and saved picture descriptions (1.7.0 fingerprints are
+    still accepted while unchanged and upgraded on the next write). Source changes since the last review are
+    listed specifically and cleared with `review_scope`. Workspaces can be deleted (`delete_plan`) and
+    questions removed (`remove_questions`, connector tool `remove_exam_questions`).
+  - Multiple-choice keys are checked: a question is rejected when its answer names or plainly reads like a
+    different choice than `correct_index`.
+  - The 1.7.0 slowdown is fixed: it re-read and re-hashed every source on every check (test library of
+    10 courses, ~2,200 files: opening the app ~36 s, checking one quiz answer ~8 s, study progress
+    ~5.6 s; now ~1.1 s, ~0.2 s and ~0.07 s, about 1.6.0 speeds). Files are recognized by `util.stat_signature` (device, file id,
+    size, mtime_ns, ctime_ns). Results are reused between actions only if the file had settled (unchanged
+    for `SETTLE_NS` = 3 s) when the read began and its disk keeps real change times
+    (`util.change_times_tracked`, probed once per folder; FAT/exFAT on a Mac and Windows are never trusted,
+    so they re-read as before). Within one action (`util.one_action` / `as_one_action`) reuse is by
+    signature, as the per-request caches did, and `Library.checked()` resolves each path once (the next
+    action resolves again; the app never creates links). Original fingerprints persist in
+    `<library>/.superstudent/fingerprints.json` (the first launch after upgrading builds it, ~3 s on the
+    test library). Record lookups use a table built once per state version (`index._record_items`).
+    `read_json_view`, `front_matter_view`, `lib.state_view()` and the notes/description `load_view`s return
+    shared objects: never modify them. The workspace screen updates from the attempt/self-assessment
+    response instead of reloading the plan.
+  - Review items 6 to 11 (see the PR): the connector's `exam_plans`, `create_exam_plan` and
+    `save_exam_questions` replies go through `exams.ai_view` / `ai_save_reply` (a 100-question workspace
+    ~215k characters -> ~55k; a save ~175k -> ~1k; `question_ids` and `include_locators` give detail on
+    request). Quiz attempts are assisted only if the answer was viewed before answering
+    (`answer_seen_first`, `assist_rule: 2`; 1.7.0 quiz attempts count as unassisted because its app showed the
+    answer only after checking); metrics add `latest_mcq_*`. Inventory rows carry `role` (study/reference);
+    coverage counts study sources only. Evidence quotes compare after NFKC, quote/dash folding and dropping
+    bold/backtick/link markup; "Slide 7" opens a titled "Slide 7 Title" when unique; `missing_locator` names
+    the closest locators. A read interrupted by a write (`changed_during_read`, e.g. a sync saving the course
+    record) is retried (`evidence.READ_RETRIES`) instead of marking practice stale. `carry_over.py`
+    (run by sync after media) keeps pre-1.6.1 study notes and descriptions and binds pre-1.7.0 transcripts
+    when the source provably hasn't changed (rules in its docstring).
 - 1.7.0 adds a course/module exam workspace, connector-generated source-cited practice, in-app multiple
   choice and self-assessed written answers, saved attempts, spaced review priorities, and source-reference
   coverage. Scope remains student-selected and unconfirmed. Changed/unavailable sources disable affected
@@ -123,18 +162,26 @@ Estimates are Claude working time.
     - `omml.py` (equations), `slide_render.py` (draws slides without LibreOffice)
     - `content.py`: Canvas HTML to Markdown, plus link tokens like `(canvas-file:123)`
   - **AI layer**
-    - `mcp_server.py`, the connector, has 16 tools including exam preparation and evidence checks.
+    - `mcp_server.py`, the connector, has 17 tools including exam preparation and evidence checks.
     - `index.py` is SQLite FTS5: headings are indexed, the title is indexed once per document, and repeated
       headings get numbered locators.
     - `compact.py`, `render.py` (view_page), `outline.py` (OUTLINE.md and study scope)
     - `notes.py` (study pass), `describe.py` (picture descriptions), `overview.py` (COURSE_OVERVIEW, EXAM_INTEL…)
     - `packs.py`, `guides.py` (SKILL.md, CLAUDE.md and AGENTS.md written into the library)
-    - `evidence.py` (exact original-source quote checks and fingerprints with a per-operation cache)
-    - `exams.py` (course/module inventory, practice, local attempt history and review scheduling)
+    - `evidence.py` (exact original-source quote checks and fingerprints; parsed sources reused between
+      requests while every file they came from is unchanged and settled)
+    - `exams.py` (course/module inventory that follows course changes, practice, local attempt history,
+      review scheduling, answer-key checks, compact connector views)
+    - `carry_over.py` (keeps older versions' notes, descriptions and transcripts when sources are unchanged)
   - **App**
     - `gui/app.py` and `gui/index.html`: local server on 127.0.0.1 with a session token, Host check, CSP and
       JSON-only POSTs.
     - `scheduler.py` (launchd), `config.py` (Keychain), `assistants.py` (Claude/Codex config), `uninstall.py`
+  - **Shared**
+    - `library.py`: paths, the course record (`load_state()` to change, `state_view()` to read), the sync
+      lock, `checked()` (refuses paths outside the library), `digest()` (fingerprints kept across launches)
+    - `util.py`: atomic writes, front matter, and the freshness cache (`stat_signature`, `settled`,
+      `change_times_tracked`, `one_action`, `cached_digest`, `read_json_view`); see its comment block
 - `mac/`
   - `launcher.sh` is the app executable and must stay bash-3.2 compatible.
   - `build_app.py` builds a wheel plus per-chip `constraints-*.txt`. These are wheels-only for macOS 13 and later,
@@ -165,10 +212,12 @@ python tests/test_study.py          # 59
 python tests/test_gui.py            # 67 (app server; SUPERSTUDENT_APP_DRYRUN)
 python tests/test_openai.py         # 18 (needs the Codex CLI on PATH for the live part)
 python tests/test_high_priority.py  # 35 security and source-freshness regressions
-python tests/test_exam_retrieval.py # 60 retrieval and source-evidence checks
-python tests/test_exams.py          # 43 exam state, scoring, scope, freshness and storage checks
-python tests/test_exam_workflow.py  # 3 real HTTP/MCP workflow tests, each with multiple assertions
-python tests/test_extraction_evidence.py # 23 extraction binding, ZIP and recording refresh regressions
+python tests/test_exam_retrieval.py # 69 retrieval, source-evidence and search-during-sync checks
+python tests/test_exams.py          # 56 exam state, scoring, scope, freshness, storage and answer-key checks
+python tests/test_exam_workflow.py  # 4 real HTTP/MCP workflow tests, each with multiple assertions
+python tests/test_extraction_evidence.py # 24 extraction binding, ZIP, recording refresh and moved-file regressions
+python tests/test_freshness_cache.py # 25 the faster freshness checks: just as strict, unchanged files read once
+python tests/test_carry_over.py     # 13 study notes, descriptions and transcripts kept from older versions
 python benchmarks/exam_retrieval.py --require-improvement
 python tests/gui_demo.py            # click through the app against the fake Canvas (token: test-token-123-padding-to-look-real)
 python mac/build_app.py             # dist/Super Student.app and dist/SuperStudent-<version>-mac.zip

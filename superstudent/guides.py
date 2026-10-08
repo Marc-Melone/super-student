@@ -30,7 +30,7 @@ Use whichever is available, in this order:
    screenshot as an image), `list_courses`, `list_files`, `sync_status`, `start_sync`,
    `list_undescribed_visuals` and `save_visual_description` (see "Describing pictures"), `study_progress` and
    `save_study_notes` (see "The study pass"); `exam_plans`, `create_exam_plan`, `check_source_evidence`,
-   and `save_exam_questions` (see "Exam prep").
+   `save_exam_questions` and `remove_exam_questions` (see "Exam prep").
 2. **Shell** (Claude Code, Codex, a ChatGPT local project, a linked computer): `superstudent search "query" --course "FIN 6100"`,
    `superstudent read "<path>" --at "Slide 7"`, `superstudent render "<path>" --page 7` (prints an image
    path to open), `superstudent status`, `superstudent sync`, `superstudent visuals` and
@@ -111,21 +111,31 @@ search hits alone.
   for one unambiguous course. Empty modules means the whole course. Other course references such as
   syllabus and announcements remain in the inventory. A student's selection is unconfirmed exam scope:
   check instructor announcements and flag disagreement or missing scope. Do not invent exam weights.
+  The workspace follows its selected modules as the course changes: material added to them can be used
+  right away, and `scope_changes` lists sources added, changed or removed since the student last
+  reviewed them (they mark that in the app).
 - **Build practice from the originals:** read the workspace inventory and sources fully. Use instructor
   terms, notation, sign conventions, examples and rubric feedback. View images for diagrams/equations.
   Cover recall, worked applications and unfamiliar transfer problems. Label these as AI-generated
   practice. Never claim an unseen official exam will match them.
 - **Save usable questions:** call `save_exam_questions` with plan_id and questions. Each has topic,
   prompt, type (mcq or short_answer), answer, explanation, difficulty (recall/application/transfer),
-  citations (path, exact unique locator, short exact supporting quote). MCQs also have choices and
-  zero-based correct_index. Explain why alternatives fail and how to avoid the common mistake.
+  citations (path, unique locator such as "Slide 7" or "Page 12", short exact supporting quote; curly
+  versus straight quotes and dashes don't matter). MCQs also have choices and
+  zero-based correct_index; the answer restates the correct choice, and Super Student rejects a key
+  whose answer names or plainly reads like a different choice. Explain why alternatives fail (in the
+  explanation) and how to avoid the common mistake.
   Quotes must lie in selected current original sources. The app rejects fabricated quotations and
   changed sources; it cannot verify that your answer follows from the quotes. Check the reasoning.
 - **Practice in the app:** quiz attempts are scored against the saved AI answer key. Short answers
-  are self-assessed after comparing with the worked answer. First-attempt quiz accuracy excludes
-  answer reveals. Review priorities use mistakes, attempts and a simple spaced schedule; these are
+  are self-assessed after comparing with the worked answer. Quiz accuracy is kept for each question's
+  first try and latest try (review progress); a try made after viewing the answer first isn't counted. Review priorities use mistakes, attempts and a simple spaced schedule; these are
   not proof of mastery or a forecast of the student's grade. Read `exam_plans` to target mistakes
-  and fill uncovered source topics in the next batch. Regenerate questions flagged for changed sources.
+  and fill uncovered study sources (`coverage.uncited_source_paths`; announcements, assignments and the
+  syllabus are scope references and aren't counted) in the next batch. It lists questions shortened; pass
+  `question_ids` to see particular ones in full. Replace questions flagged for changed sources:
+  save the new question, then remove the old one with `remove_exam_questions`. Remove a question with
+  a wrong key the same way; ask the student first if they have already practiced it.
 - **Scope:** find the exam date and what it covers (`EXAM_INTEL.md`, announcements, syllabus,
   `CALENDAR.md`). If coverage is given as weeks, modules or chapters, restrict everything to those.
 - **Prioritise:** topics the instructor flagged, spent lecture time on, repeated across slides and
