@@ -25,7 +25,7 @@ the assistant you use. One library and one sync serve both.
 
 **New here? The [Super Student website](https://marc-melone.github.io/super-student/) explains it in plain language.**
 
-**Get the Mac app:** [download SuperStudent-1.7.1-mac.zip](https://github.com/Marc-Melone/super-student/releases/download/v1.7.1/SuperStudent-1.7.1-mac.zip)
+**Get the Mac app:** [download SuperStudent-1.7.1-mac.zip](https://github.com/Marc-Melone/super-student/raw/main/releases/SuperStudent-1.7.1-mac.zip)
 (also in the [`releases`](releases) folder), then follow [Install the Mac app](#install-the-mac-app-no-terminal-needed). You need a Mac with macOS 13 or newer, the ChatGPT
 or Claude desktop app, and a Canvas account that lets students make access tokens. It's a personal tool: one
 student, their own courses, on their own Mac.
