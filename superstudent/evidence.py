@@ -10,10 +10,13 @@ sits is not part of the fingerprint: sync carries saved citations along when it 
 
 from __future__ import annotations
 
+import difflib
 import hashlib
 import json
 import re
 import threading
+import time
+import unicodedata
 from pathlib import Path, PurePosixPath
 from typing import Any, Dict, List, Optional
 
@@ -32,6 +35,7 @@ MAX_REMEMBERED_SOURCES = 2000
 _SOURCES: Dict[tuple, Dict[str, Any]] = {}
 _SOURCES_LOCK = threading.Lock()
 MAX_QUOTE_CHARS = 12000
+READ_RETRIES = (0.02, 0.05, 0.1, 0.2, 0.4, None)    # seconds between reads interrupted by a write; None: give up
 EXCLUDED_PARTS = {"Study Notes", "_Study", "_Exam Packs", REMOVED_DIR}
 EXCLUDED_TYPES = {"study_notes", "outline", "overview", "exam_intel", "calendar", "module", "links", "grades"}
 
@@ -105,6 +109,20 @@ def _within(path: Path, directory: Path) -> bool:
 
 
 def _source(lib, course_folder: str, value: str, source_cache=None) -> Dict[str, Any]:
+    """A source as it is now. A sync saving its progress (the course record) or rewriting a file while it is
+    being read makes the read inconclusive, not the source changed: read it again a few times before giving up,
+    so practice doesn't flicker to "source changed" and answers aren't refused during an update."""
+    for wait in READ_RETRIES:
+        try:
+            return _read_source(lib, course_folder, value, source_cache)
+        except EvidenceError as exc:
+            if exc.code != "changed_during_read" or wait is None:
+                raise
+        time.sleep(wait)
+    raise AssertionError("unreachable")
+
+
+def _read_source(lib, course_folder: str, value: str, source_cache=None) -> Dict[str, Any]:
     directory = _course_dir(lib, course_folder, source_cache)
     rel = _relative(value)
     lexical = lib.root / rel
@@ -221,9 +239,14 @@ def _source(lib, course_folder: str, value: str, source_cache=None) -> Dict[str,
         sections = _split_sections(strip_blocks(body))
         names = unique_locators([name for name, _, _ in sections])
         locators: Dict[str, List[int]] = {}
+        aliases: Dict[str, List[int]] = {}
         for i, name in enumerate(names):
-            locators.setdefault(_norm_loc(name), []).append(i)
-        source = {"path": canonical, "sections": sections, "names": names, "locators": locators,
+            key = _norm_loc(name)
+            locators.setdefault(key, []).append(i)
+            short = _SHORT_LOC.match(key)
+            if short:
+                aliases.setdefault(short.group(1), []).append(i)
+        source = {"path": canonical, "sections": sections, "names": names, "locators": locators, "aliases": aliases,
                   "source_fingerprint": fingerprint, "legacy_fingerprint": legacy_fingerprint,
                   "source_status": status["status"]}
         after = (_stamp(lib, target), _stamp(lib, original_path), _stamp(lib, lib.state_path))
@@ -271,8 +294,39 @@ def source_fingerprints(lib, path: str, course_folder: str = "", source_cache: O
     return source["source_fingerprint"], source["legacy_fingerprint"]
 
 
+# A titled slide or page ("Slide 7 Capital Budgeting Rules") or a titled recording timestamp can also be cited by
+# its number alone ("Slide 7"), as long as that opens exactly one section.
+_SHORT_LOC = re.compile(r"^((?:slide|page)\s+\d+|\d{1,2}:\d{2}(?::\d{2})?)\s+\S")
+# Typographic variants a quotation may use for the same character: curly quotes and apostrophes, dashes and the
+# minus sign, no-break spaces. NFKC also turns ligatures and the ellipsis character into plain letters and "...".
+_FOLD = str.maketrans({"\u2018": "'", "\u2019": "'", "\u201a": "'", "\u2032": "'", "\u201c": '"', "\u201d": '"',
+                       "\u201e": '"', "\u2033": '"', "\u2010": "-", "\u2011": "-", "\u2012": "-", "\u2013": "-",
+                       "\u2014": "-", "\u2015": "-", "\u2212": "-", "\u00a0": " ", "\u202f": " ", "\u00ad": None})
+_MARKUP = re.compile(r"\*\*|__|`")
+_LINK = re.compile(r"!?\[([^\]]*)\]\([^)]*\)")
+
+
 def _normal(text: str) -> str:
+    """Compare the words, not their typography: ’ and ', – and -, bold markers or a link's address don't
+    make a quotation fail. Letters, digits and punctuation must still match exactly, in order."""
+    text = unicodedata.normalize("NFKC", text).translate(_FOLD)
+    text = _MARKUP.sub("", _LINK.sub(r"\1", text))
     return re.sub(r"\s+", " ", text).strip().casefold()
+
+
+def _section_index(source: Dict[str, Any], locator: str) -> int:
+    wanted = _norm_loc(heading_locator(locator))
+    matches = source["locators"].get(wanted) or source.get("aliases", {}).get(wanted, [])
+    if len(matches) == 1:
+        return matches[0]
+    names = source["names"]
+    if matches:
+        raise EvidenceError("ambiguous_locator", "That locator opens more than one section. Use one of: "
+                            + "; ".join(names[i] for i in matches[:5]) + ".")
+    keys = {_norm_loc(n): n for n in names if n}
+    close = [keys[k] for k in difflib.get_close_matches(wanted, list(keys), n=3, cutoff=0.6)]
+    raise EvidenceError("missing_locator", "Use one exact, unique section locator from the source"
+                        + (" (closest: " + "; ".join(close) + ")." if close else "."))
 
 
 def _validate(lib, course_folder: str, citations: List[Dict[str, Any]], recheck: bool,
@@ -302,12 +356,7 @@ def _validate(lib, course_folder: str, citations: List[Dict[str, Any]], recheck:
                 if expected not in (source["source_fingerprint"], source["legacy_fingerprint"]):
                     raise EvidenceError("changed_source", "The source changed after this evidence was saved; regenerate the practice item.")
             sections, names = source["sections"], source["names"]
-            wanted = _norm_loc(heading_locator(locator))
-            matches = source["locators"].get(wanted, [])
-            if len(matches) != 1:
-                raise EvidenceError("ambiguous_locator" if matches else "missing_locator",
-                                    "Use one exact, unique section locator from the source.")
-            j = matches[0]
+            j = _section_index(source, locator)
             section = sections[j][1]
             if _normal(quote) not in _normal(section):
                 raise EvidenceError("quote_mismatch", "The quoted passage does not occur in that source section.")

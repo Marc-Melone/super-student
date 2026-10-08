@@ -28,7 +28,7 @@ from typing import Any, Dict, List, Optional
 from urllib.parse import unquote
 
 from .library import LibraryPathError, _try_lock, _unlock
-from .outline import GENERATED, LIGHT_SECTIONS, LINK, SKIP_PARTS, STUDY_SECTIONS, _load
+from .outline import GENERATED, LIGHT_SECTIONS, LINK, SKIP_PARTS, STUDY_SECTIONS, _has_review, _load
 from .util import atomic_write_bytes, is_within, one_action, relative_posix
 
 VERSION = 1
@@ -38,6 +38,11 @@ MAX_BATCH = 50
 MAX_REMOVE = 500
 EVIDENCE_LABEL = "Quote checked against the source; answer not independently verified."
 SCOPE_LABEL = "Student-selected scope; confirm the covered material and exam format with your instructor."
+# Course references kept in a workspace for scope and exam hints (dates, coverage, rubric feedback) but not
+# counted as study material that should have practice questions: announcements, assignments, discussions,
+# the syllabus, calendar events, stand-alone pages and quizzes without past questions.
+REFERENCE_KINDS = {"announcement", "assignment", "discussion", "syllabus", "event"}
+REFERENCE_SECTIONS = {"Announcements", "Assignments", "Discussions", "Syllabus", "Pages", "Quizzes"}
 _thread_locks: Dict[str, threading.RLock] = {}
 _thread_guard = threading.Lock()
 
@@ -325,8 +330,12 @@ def _inventory(lib, cdir, modules, module_rows, source_cache=None):
             missing = doc.missing
         except ValueError as exc:
             fp, legacy, missing = "", "", doc.missing or str(exc)
+        if doc.kind == "quiz" or section == "Quizzes":
+            role = "study" if _has_review(sidecar) else "reference"
+        else:
+            role = "reference" if doc.kind in REFERENCE_KINDS or section in REFERENCE_SECTIONS else "study"
         out.append({"path": canonical, "original_path": doc.rel, "title": doc.title, "section": doc.section,
-                    "kind": doc.kind, "missing": missing,
+                    "kind": doc.kind, "role": role, "missing": missing,
                     "source_fingerprint": fp, "_legacy": legacy,
                     "locators": [u.name for u in doc.units]})
 
@@ -520,34 +529,58 @@ def _upgrade_fingerprints(lib, plan, scope, source_cache=None) -> None:
             row["source_fingerprint"] = now["source_fingerprint"]
 
 
+def _assisted(attempt) -> bool:
+    """Whether the answer was shown before this attempt. 1.7.0 counted every quiz attempt after the first as
+    assisted, because the app shows the worked answer after each check; its app could not show a quiz's answer
+    before an attempt, so its saved quiz attempts count as unassisted (rule 2 records the actual order)."""
+    if attempt.get("mode") == "mcq" and attempt.get("assist_rule") != 2:
+        return False
+    return bool(attempt.get("assisted"))
+
+
 def _metrics(plan):
     current_ids = {q["id"] for q in plan["questions"] if q.get("status") == "current"}
     attempts = [a for a in plan["attempts"] if a["question_id"] in current_ids]
-    first = {}
-    for attempt in attempts:
-        if attempt.get("mode") == "mcq" and not attempt.get("assisted"):
-            first.setdefault(attempt["question_id"], attempt)
-    recent = [a for a in attempts if a.get("mode") == "mcq" and not a.get("assisted")][-20:]
+    quiz = [a for a in attempts if a.get("mode") == "mcq" and not _assisted(a)]
+    first, latest = {}, {}
+    for attempt in quiz:
+        first.setdefault(attempt["question_id"], attempt)
+        latest[attempt["question_id"]] = attempt
+    recent = quiz[-20:]
+    rate = lambda rows: round(sum(bool(a.get("correct")) for a in rows) / len(rows), 3) if rows else None
     ratings = {key: sum(a.get("self_rating") == key for a in attempts if a.get("mode") == "self_report")
                for key in ("again", "hard", "good")}
     return {"first_attempt_mcq_count": len(first),
-            "first_attempt_mcq_accuracy": round(sum(bool(a.get("correct")) for a in first.values()) / len(first), 3) if first else None,
+            "first_attempt_mcq_accuracy": rate(list(first.values())),
+            "latest_mcq_count": len(latest),
+            "latest_mcq_accuracy": rate(list(latest.values())),
             "recent_mcq_count": len(recent),
-            "recent_mcq_accuracy": round(sum(bool(a.get("correct")) for a in recent) / len(recent), 3) if recent else None,
+            "recent_mcq_accuracy": rate(recent),
             "self_reported_ratings": ratings,
             "stale_attempts_excluded": len(plan["attempts"]) - len(attempts),
-            "meaning": "Practice performance and self-reported review needs; not a measure of mastery or predicted exam marks."}
+            "meaning": "Practice performance and self-reported review needs; not a measure of mastery or predicted "
+                       "exam marks. First attempts show what you knew before practicing; latest attempts show where "
+                       "review has got you. Attempts made after viewing the answer first are left out of both."}
 
 
 def _coverage(plan, inventory):
-    available = {r["path"] for r in inventory if not r.get("missing") and r.get("source_fingerprint")}
+    """Which study sources (lectures, readings, recordings, module pages, past quiz questions) have current
+    practice. Course references such as announcements and the syllabus are counted apart: they set the scope,
+    but a question about an office-hours reminder is not exam practice."""
+    available = {r["path"]: r.get("role", "study") for r in inventory if not r.get("missing") and r.get("source_fingerprint")}
+    study = {p for p, role in available.items() if role == "study"}
     current = [q for q in plan["questions"] if q.get("status") == "current"]
     cited = {c["path"] for q in current for c in q["citations"]}.intersection(available)
-    return {"available_sources": len(available), "cited_sources": len(cited),
-            "uncited_source_paths": sorted(available - cited), "current_questions": len(current),
+    return {"available_sources": len(study), "cited_sources": len(cited & study),
+            "uncited_source_paths": sorted(study - cited),
+            "reference_sources": len(available) - len(study), "cited_reference_sources": len(cited - study),
+            "current_questions": len(current),
             "difficulty_counts": {level: sum(q["difficulty"] == level for q in current)
                                   for level in ("recall", "application", "transfer")},
-            "meaning": "Practice source references; not exhaustive topic coverage or a measure of mastery."}
+            "meaning": "Practice source references for study material (lectures, readings, recordings, module "
+                       "pages, past quiz questions); announcements, assignments, discussions, the syllabus and "
+                       "other pages are counted separately as references. This is not exhaustive topic coverage or a "
+                       "measure of mastery."}
 
 
 def _public(lib, stored, include_answers, source_cache=None, scope=None):
@@ -591,10 +624,77 @@ def _public(lib, stored, include_answers, source_cache=None, scope=None):
     plan["scope_status"] = "student_selected_unconfirmed"
     plan["scope_note_label"] = SCOPE_LABEL
     plan["review_schedule"] = "Missed/again: 10 minutes; hard: 1 day; correct/good: 1, 3, 7, 14 then 30 days after successive successful reviews."
-    if not include_answers:
-        for attempt in plan["attempts"]:
+    for attempt in plan["attempts"]:
+        attempt["assisted"] = _assisted(attempt)
+        if not include_answers:
             attempt.pop("answer", None)
     return plan
+
+
+AI_PROMPT_CHARS = 160
+AI_QUEUE = 20
+AI_DETAIL_LIMIT = 50
+
+
+def ai_view(public, question_ids=None, include_locators=False) -> Dict[str, Any]:
+    """A workspace as the connector sends it to an AI: everything needed to plan the next practice batch, without
+    repeating every answer, quote and section name (a 100-question workspace was ~65,000 tokens in 1.7.0).
+    Questions are listed by id, topic, status, a shortened prompt and what they cite; `question_ids` adds those
+    questions in full, and `include_locators` lists every source's section locators."""
+    if question_ids is not None and (not isinstance(question_ids, list) or len(question_ids) > AI_DETAIL_LIMIT
+                                     or any(not isinstance(q, str) for q in question_ids)):
+        raise ExamError(f"Ask for at most {AI_DETAIL_LIMIT} question ids at a time.")
+    keys = ("id", "title", "course_folder", "course_label", "exam_date", "format", "scope_note", "selected_modules",
+            "selected_module_names", "scope_status", "scope_note_label", "scope_changed", "scope_warnings",
+            "scope_changes", "metrics", "coverage", "review_schedule", "created_at", "updated_at")
+    out = {k: public[k] for k in keys if k in public}
+    latest = {}
+    for attempt in public["attempts"]:
+        latest[attempt["question_id"]] = attempt
+    rows = []
+    for q in public["questions"]:
+        prompt = q["prompt"]
+        row = {"id": q["id"], "topic": q["topic"], "type": q["type"], "difficulty": q["difficulty"],
+               "status": q["status"],
+               "prompt": prompt if len(prompt) <= AI_PROMPT_CHARS else prompt[:AI_PROMPT_CHARS - 1].rstrip() + "\u2026",
+               "cites": [{"path": c["path"], "locator": c["locator"]} for c in q["citations"]],
+               "attempts": q.get("attempt_count", 0)}
+        if q["status"] != "current":
+            row["status_errors"] = q.get("status_errors") or []
+        last = latest.get(q["id"])
+        if last:
+            row["last_result"] = (("correct" if last.get("correct") else "incorrect") if last.get("mode") == "mcq"
+                                  else "self-rated " + last.get("self_rating", ""))
+        rows.append(row)
+    out["questions"] = rows
+    out["question_count"] = len(rows)
+    out["review_queue"] = [{"question_id": r["question_id"], "reason": r["reason"]}
+                           for r in public.get("review_queue", [])[:AI_QUEUE]]
+    out["review_queue_total"] = len(public.get("review_queue", []))
+    out["sources"] = [{k: r[k] for k in (("path", "title", "role", "missing", "locators") if include_locators
+                                          else ("path", "title", "role", "missing")) if k in r and (r[k] or k == "role")}
+                      for r in public["inventory"]]
+    if question_ids:
+        by_id = {q["id"]: q for q in public["questions"]}
+        unknown = [q for q in question_ids if q not in by_id]
+        if unknown:
+            raise ExamError("That practice question was not found in this exam plan: " + ", ".join(unknown[:3]))
+        out["question_details"] = [by_id[q] for q in dict.fromkeys(question_ids)]
+    out["detail_note"] = ("Questions are shortened. Pass question_ids for full questions with answers and quotes, "
+                          "and include_locators for every source's section names (or read_material a source).")
+    return out
+
+
+def ai_save_reply(result) -> Dict[str, Any]:
+    """What save_exam_questions tells the AI: what was saved and what is left to cover, not the whole workspace."""
+    if not result.get("ok"):
+        return result
+    plan = result["plan"]
+    stale = [q["id"] for q in plan["questions"] if q.get("status") != "current"]
+    return {"ok": True, "added": result["added"], "skipped_duplicates": result["skipped_duplicates"],
+            "question_ids": result["question_ids"], "question_count": len(plan["questions"]),
+            "questions_needing_regeneration": stale, "coverage": plan["coverage"],
+            "scope_warnings": plan["scope_warnings"], "evidence_note": result["evidence_note"]}
 
 
 @_api
@@ -796,6 +896,13 @@ def reveal_question(lib, plan_id, question_id):
         status, errors = _question_status(lib, plan, question, source_cache)
         if status != "current":
             raise ExamError("This question needs regeneration: " + "; ".join(errors))
+        # Viewing the worked answer after checking a quiz answer reviews that attempt; viewing it before answering
+        # (always the case for a written answer, which is compared with it) makes the next attempt assisted.
+        latest = next((a for a in reversed(plan["attempts"]) if a["question_id"] == question["id"]), None)
+        if question["type"] == "mcq" and latest and latest["id"] != question.get("reviewed_attempt_id"):
+            question["reviewed_attempt_id"] = latest["id"]
+        else:
+            question["answer_seen_first"] = True
         question["revealed"] = True
         question["revealed_at"] = _iso(_now())
         plan["updated_at"] = question["revealed_at"]
@@ -852,7 +959,9 @@ def record_attempt(lib, plan_id, question_id, answer="", choice_index=-1, self_r
         attempt = {"id": uuid.uuid4().hex, "question_id": question["id"], "at": _iso(now),
                    "mode": mode, "answer": answer, "correct": correct,
                    "self_rating": self_rating if mode == "self_report" else "",
-                   "assisted": bool(question.get("revealed")), "next_review_at": question["next_review_at"]}
+                   "assisted": bool(question.get("answer_seen_first")), "assist_rule": 2,
+                   "next_review_at": question["next_review_at"]}
+        question["answer_seen_first"] = False
         if mode == "mcq":
             attempt["choice_index"] = choice_index
         plan["attempts"].append(attempt)

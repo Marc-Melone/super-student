@@ -9,9 +9,11 @@ unapproved MCP integrations. This scope statement does not establish approval fo
 
 **Version 1.7.0 adds saved exam practice and scheduled review, and includes the security and source-freshness fixes.** Replace the older app with this version
 and reopen it to update its private runtime. Then restart ChatGPT and Claude so their connectors use the
-updated code. Your course library and settings are kept. Older visual descriptions and study notes may
-need to be recreated because source changes are now checked more strictly. Run **Update now** once after
-upgrading to rebuild older extracted files before generating exam practice.
+updated code. Your course library and settings are kept. Run **Update now** once after upgrading: it
+rebuilds older extracted files before generating exam practice, and keeps the study notes, picture
+descriptions and recording transcripts made by an older version whose files haven't changed since. Those
+that can't be shown to match (the text changed, the file was replaced, or a picture was described on the
+same day its file arrived) are marked outdated and need making again.
 
 Turns your Canvas courses into a study library your AI can actually use, with **Claude** or **ChatGPT**
 (Work, Chat and Codex). It pulls everything you can see in Canvas onto your Mac, keeps it up to date on
@@ -65,6 +67,11 @@ reviewed** clears the list once you've looked. A picture description saved later
 workspace** removes a workspace you no longer need. A multiple-choice question is rejected when its written
 answer names a different choice than its answer key, which catches a miscounted key.
 
+Coverage counts study sources (lectures, readings, recordings, module pages and past quiz questions).
+Announcements, assignments, discussions, the syllabus and other pages stay in the workspace for scope and
+exam hints, but aren't counted as gaps. A quotation may use straight or curly quotes and dashes, and a
+titled slide or page can be cited by its number alone ("Slide 7").
+
 Extracted text is tied to the exact original file used during conversion. Older extracted files need one
 update to establish that link. A changed original or source ZIP blocks its previous text from supplying
 new practice until conversion completes again.
@@ -74,7 +81,9 @@ in current local source text, **not** that an AI answer is logically correct. Se
 supplied alternate phrasings; it does not use embeddings or automatically search by meaning. The app still
 uses your external assistant to create questions and explain new topics.
 
-First-attempt quiz performance, self-assessment, and saved source-note coverage are separate. None is proof
+Quiz accuracy is shown for each question's first try and its latest try, so review progress shows; a try
+made after viewing the answer first isn't counted. Quiz performance, self-assessment, and saved source-note
+coverage are separate. None is proof
 of mastery or a prediction of an exam grade. No comparative answer-quality or learning study against
 NotebookLM has been completed. Run the authored retrieval/evidence benchmark described in
 [benchmarks/README.md](benchmarks/README.md) to reproduce the limited offline checks.

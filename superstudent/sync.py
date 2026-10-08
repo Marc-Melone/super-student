@@ -105,6 +105,7 @@ class Syncer:
                         pass
                 self.lib.save_state(self.state)
             self.process_media()
+            self.carry_over()
             for cs in self.courses:
                 try:
                     cs.finish()
@@ -132,6 +133,18 @@ class Syncer:
             self.lib.log(f"sync ok: {len(self.courses)} courses, {self.cv.calls} API calls, "
                          f"{self.report['seconds']}s, errors={len(self.report['errors'])}")
         return self.report
+
+    def carry_over(self) -> None:
+        """Keep study notes and picture descriptions saved by older versions whose sources haven't changed."""
+        from . import carry_over
+        try:
+            notes, pictures = carry_over.study_notes(self.lib), carry_over.descriptions(self.lib)
+        except Exception as exc:          # never let this stop a sync: the work just stays marked outdated
+            self.report["errors"].append(f"Carrying over older study notes: {exc}")
+            return
+        if notes or pictures:
+            self.log(f"Kept {notes} study note record(s) and {pictures} picture description(s) from an older version")
+        self.report["carried_over"] = {"study_notes": notes, "descriptions": pictures}
 
     def list_courses(self) -> List[Dict[str, Any]]:
         wanted = self.cfg.get("courses", "active")
@@ -1680,6 +1693,12 @@ class CourseSync:
             out_meta, _ = parse_front_matter(out.read_text(encoding="utf-8"))
             needs_binding = bool(out_meta.get("source_file") or out_meta.get("source_sha256"))
         binding_current = not needs_binding or self._extraction_current(original, out)
+        if not binding_current and out.is_file() and original.is_file():
+            # A transcript made before 1.7.0 isn't bound to its recording; bind it rather than transcribe again
+            # when the recording is provably the one transcribed (see carry_over.bind_transcript).
+            from .carry_over import bind_transcript
+            binding_current = (bind_transcript(self.s.lib, original, out, it, job.get("stamp"))
+                               and self._extraction_current(original, out))
         if (it.get("status") == "ok" and not it.get("stale") and out.exists()
                 and it.get("stamp") == job.get("stamp") and binding_current):
             job["done"] = True

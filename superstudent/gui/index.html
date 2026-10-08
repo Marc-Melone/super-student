@@ -1243,14 +1243,14 @@ function openExamPlan(c, id) {
           el("button", { class: "btn", onclick: load }, "Refresh questions")),
         el("p", { class: "help" }, "Paste the request into your connected ChatGPT or Claude, then refresh here."),
         details,
-        el("p", { class: "small" }, "Practice references " + (coverage.cited_sources || 0) + " of " + (coverage.available_sources || 0) + " available sources."),
+        el("p", { class: "small" }, "Practice covers " + (coverage.cited_sources || 0) + " of " + plural(coverage.available_sources || 0, "study source") + " (lectures, readings, recordings, module pages). Announcements, assignments, discussions and the syllabus are kept for scope, not counted."),
         (coverage.uncited_source_paths || []).length ? el("p", { class: "aside small" }, plural(coverage.uncited_source_paths.length, "source") + (coverage.uncited_source_paths.length === 1 ? " still has" : " still have") + " no current practice question. Ask your AI to fill those gaps.") : null,
         el("h3", null, "Practice and review"),
         el("p", { class: "muted small" }, "Quizzes use an AI answer key. Written answers are self-assessed."),
         el("div", { class: "small", style: "margin-bottom:16px" }, metricText(metrics)),
         metrics.stale_attempts_excluded ? el("p", { class: "help" }, plural(metrics.stale_attempts_excluded, "past attempt") + " excluded from current results because their questions' sources changed.") : null,
         el("details", { style: "margin-bottom:16px" }, el("summary", { class: "small muted" }, "How source checks and results work"),
-          el("p", { class: "help" }, "Practice is AI-generated. Checked quotations confirm the source text exists; check explanations against the sources. Source references do not prove complete topic coverage. Quiz accuracy counts first attempts before viewing the answer. Self-assessment and quiz results are not proof of mastery or a prediction of your exam grade.")),
+          el("p", { class: "help" }, "Practice is AI-generated. Checked quotations confirm the source text exists; check explanations against the sources. Source references do not prove complete topic coverage. Quiz accuracy is shown for each question's first try and its latest try, so review progress shows. Viewing a worked answer after checking yours is fine; a try made after viewing the answer first isn't counted. Self-assessment and quiz results are not proof of mastery or a prediction of your exam grade.")),
         sorted.length ? el("div", { class: "choices" }, sorted.map(q => el("div", { class: "choice", style: "display:block" },
           el("div", { class: "row" }, el("strong", null, q.topic || "Practice"), el("span", { class: "spacer" }),
             el("button", { class: "btn quiet small", onclick: () => removeQuestion(q) }, "Remove"),
@@ -1282,10 +1282,10 @@ function confirmAction(title, message, label, action) {
 }
 
 function metricText(m) {
-  const total = m.first_attempt_mcq_count || 0;
-  const accuracy = m.first_attempt_mcq_accuracy;
+  const pct = (rate, count) => count && rate !== null && rate !== undefined ? Math.round(100 * rate) + "% across " + plural(count, "question") : "no attempts yet";
   const ratings = m.self_reported_ratings || {};
-  return "First-attempt quizzes: " + (total && accuracy !== null ? Math.round(100 * accuracy) + "% across " + plural(total, "question") : "no attempts yet") +
+  return "Quizzes, first try: " + pct(m.first_attempt_mcq_accuracy, m.first_attempt_mcq_count || 0) +
+    ". Latest try: " + pct(m.latest_mcq_accuracy, m.latest_mcq_count || 0) +
     ". Written answers (self-assessed): " + (ratings.again || 0) + " need another try, " + (ratings.hard || 0) + " partial, " + (ratings.good || 0) + " could explain.";
 }
 

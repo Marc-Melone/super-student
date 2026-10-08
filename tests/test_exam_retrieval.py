@@ -151,8 +151,30 @@ class EvidenceTests(CourseFixture):
 
     def test_locator_requires_exact_match(self):
         self.path = self.write("Files/titled.md", "# Lesson\n\n## [Page 1] Duration\n\nModified duration estimates rate risk.")
-        self.assertEqual(self.validate()["errors"][0]["code"], "missing_locator")
         self.assertTrue(self.validate(locator="Page 1 Duration")["valid"])
+        short = self.validate(locator="Page 1")              # a titled page can be cited by its number alone
+        self.assertTrue(short["valid"], short)
+        self.assertEqual(short["records"][0]["locator"], "Page 1 Duration")
+        for wrong in ("Page 2", "Page 1 Convexity", "Duration"):
+            self.assertEqual(self.validate(locator=wrong)["errors"][0]["code"], "missing_locator", wrong)
+        self.assertIn("Page 1 Duration", self.validate(locator="Page 1 Durations")["errors"][0]["message"])
+
+    def test_short_locator_must_open_one_section(self):
+        self.path = self.write("Files/twice.md", "# Lesson\n\n## [Slide 3] Duration\n\nModified duration estimates rate risk.\n\n"
+                                                 "## [Slide 3] Convexity\n\nConvexity refines it.")
+        result = self.validate(locator="Slide 3")
+        self.assertEqual(result["errors"][0]["code"], "ambiguous_locator")
+        self.assertIn("Slide 3 Duration", result["errors"][0]["message"])
+        self.assertTrue(self.validate(locator="Slide 3 Duration")["valid"])
+
+    def test_quote_ignores_typography_but_not_words(self):
+        self.path = self.write("Files/typography.md", "# Lesson\n\n## [Page 1]\n\nThe bond\u2019s **modified duration** \u2014 a "
+                                                      "first\u2010order [estimate](https://example.edu/x) \u2026 of rate\u00a0risk.")
+        for quote in ("The bond's modified duration - a first-order estimate ... of rate risk.",
+                      "bond\u2019s **modified duration**", "the BOND'S modified"):
+            self.assertTrue(self.validate(locator="Page 1", quote=quote)["valid"], quote)
+        for quote in ("The bonds modified duration", "modified duration a first-order", "estimate of rate risk"):
+            self.assertEqual(self.validate(locator="Page 1", quote=quote)["errors"][0]["code"], "quote_mismatch", quote)
 
     def test_canonical_locator_collision_is_ambiguous(self):
         self.path = self.write("Files/repeated.md", "# Lesson\n\n## Example\n\nFirst.\n\n## Example\n\nSecond.\n\n## Example (2)\n\nThird.")
@@ -579,14 +601,33 @@ class EvidenceTests(CourseFixture):
         self.binary_source()
         path = self.lib.root / self.path
         cache = {}
-        def replacing_digest(original):
-            value = file_digest(original)
-            path.write_text(path.read_text().replace("# Lesson", "# Changed"))
-            return value
-        with patch("superstudent.evidence.file_digest", side_effect=replacing_digest):
+        from superstudent import evidence
+        real_status = evidence.material_status
+        def rewriting_status(*args, **kwargs):          # the text is rewritten during every read
+            path.write_text(path.read_text() + "\nMore.\n")
+            return real_status(*args, **kwargs)
+        with patch("superstudent.evidence.material_status", side_effect=rewriting_status), \
+                patch("superstudent.evidence.READ_RETRIES", (0, 0, None)):
             result = validate_evidence(self.lib, self.folder, [self.citation()], source_cache=cache)
         self.assertEqual(result["errors"][0]["code"], "changed_during_read")
         self.assertFalse(any(key[0] == "source" for key in cache))
+
+    def test_write_during_read_is_read_again_not_reported_changed(self):
+        """A sync saving its progress mid-check used to mark practice "source changed" for a moment."""
+        from superstudent import evidence
+        self.binary_source()
+        state = self.lib.load_state()
+        calls = []
+        def saving_digest(original):
+            calls.append(1)
+            if len(calls) == 1:
+                self.lib.save_state(state)              # the course record is saved while this source is read
+            return file_digest(original)
+        with patch("superstudent.evidence.file_digest", side_effect=saving_digest), \
+                patch("superstudent.evidence._read_source", wraps=evidence._read_source) as reads:
+            result = validate_evidence(self.lib, self.folder, [self.citation()], source_cache={})
+        self.assertTrue(result["valid"], result)
+        self.assertEqual(reads.call_count, 2)              # interrupted once, then read again
 
 
 class SearchDuringUpdatesTests(CourseFixture):

@@ -135,8 +135,16 @@ class ExamWorkflow(unittest.TestCase):
                     self.assertTrue(evidence["valid"], evidence)
                     saved = await call("save_exam_questions", {"plan_id": pid, "questions": [self.question()]})
                     self.assertEqual(saved["added"], 1)
+                    self.assertNotIn("plan", saved)                 # the reply no longer repeats the workspace
+                    self.assertEqual(saved["question_count"], 1)
+                    self.assertIn("uncited_source_paths", saved["coverage"])
                     read_plan = await call("exam_plans", {"plan_id": pid})
-                    self.assertEqual(read_plan["plan"]["questions"][0]["answer"], self.question()["answer"])
+                    self.assertNotIn("answer", read_plan["plan"]["questions"][0])
+                    self.assertEqual(read_plan["plan"]["questions"][0]["cites"][0]["locator"], "Page 1")
+                    full = await call("exam_plans", {"plan_id": pid, "question_ids": saved["question_ids"]})
+                    self.assertEqual(full["plan"]["question_details"][0]["answer"], self.question()["answer"])
+                    located = await call("exam_plans", {"plan_id": pid, "include_locators": True})
+                    self.assertTrue(any(s.get("locators") for s in located["plan"]["sources"]))
                     fabricated = self.question()
                     fabricated["citations"][0]["quote"] = "A invented claim never stated by the instructor."
                     rejected = await call("save_exam_questions", {"plan_id": pid, "questions": [fabricated]})
