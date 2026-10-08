@@ -7,7 +7,7 @@ neither has been established for this project. See [Canvas's OAuth requirements]
 and [Canvas's API policy](https://www.instructure.com/policies/canvas-api-policy), including its restrictions on
 unapproved MCP integrations. This scope statement does not establish approval for personal MCP use.
 
-**Version 1.7.0 adds saved exam practice and scheduled review, and includes the security and source-freshness fixes.** Replace the older app with this version
+**Version 1.7.1 makes the app fast again, keeps search working during updates, and improves exam practice (workspaces that follow course changes, checked answer keys, review progress, smaller replies to your AI). It also keeps study notes, picture descriptions and transcripts from older versions when their files haven't changed. Version 1.7.0 added saved exam practice and scheduled review.** Replace the older app with this version
 and reopen it to update its private runtime. Then restart ChatGPT and Claude so their connectors use the
 updated code. Your course library and settings are kept. Run **Update now** once after upgrading: it
 rebuilds older extracted files before generating exam practice, and keeps the study notes, picture
@@ -25,7 +25,7 @@ the assistant you use. One library and one sync serve both.
 
 **New here? The [Super Student website](https://marc-melone.github.io/super-student/) explains it in plain language.**
 
-**Get the Mac app:** [download SuperStudent-1.7.0-mac.zip](https://github.com/Marc-Melone/super-student/releases/download/v1.7.0/SuperStudent-1.7.0-mac.zip)
+**Get the Mac app:** [download SuperStudent-1.7.1-mac.zip](https://github.com/Marc-Melone/super-student/releases/download/v1.7.1/SuperStudent-1.7.1-mac.zip)
 (also in the [`releases`](releases) folder), then follow [Install the Mac app](#install-the-mac-app-no-terminal-needed). You need a Mac with macOS 13 or newer, the ChatGPT
 or Claude desktop app, and a Canvas account that lets students make access tokens. It's a personal tool: one
 student, their own courses, on their own Mac.
