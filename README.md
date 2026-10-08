@@ -7,10 +7,11 @@ neither has been established for this project. See [Canvas's OAuth requirements]
 and [Canvas's API policy](https://www.instructure.com/policies/canvas-api-policy), including its restrictions on
 unapproved MCP integrations. This scope statement does not establish approval for personal MCP use.
 
-**Version 1.6.1 includes the security and study-accuracy fixes.** Replace the older app with this version
+**Version 1.7.0 adds saved exam practice and scheduled review, and includes the security and source-freshness fixes.** Replace the older app with this version
 and reopen it to update its private runtime. Then restart ChatGPT and Claude so their connectors use the
 updated code. Your course library and settings are kept. Older visual descriptions and study notes may
-need to be recreated because source changes are now checked more strictly.
+need to be recreated because source changes are now checked more strictly. Run **Update now** once after
+upgrading to rebuild older extracted files before generating exam practice.
 
 Turns your Canvas courses into a study library your AI can actually use, with **Claude** or **ChatGPT**
 (Work, Chat and Codex). It pulls everything you can see in Canvas onto your Mac, keeps it up to date on
@@ -22,7 +23,7 @@ the assistant you use. One library and one sync serve both.
 
 **New here? The [Super Student website](https://marc-melone.github.io/super-student/) explains it in plain language.**
 
-**Get the Mac app:** [download SuperStudent-1.6.1-mac.zip](https://github.com/Marc-Melone/super-student/raw/main/releases/SuperStudent-1.6.1-mac.zip)
+**Get the Mac app:** [download SuperStudent-1.7.0-mac.zip](https://github.com/Marc-Melone/super-student/releases/download/v1.7.0/SuperStudent-1.7.0-mac.zip)
 (also in the [`releases`](releases) folder), then follow [Install the Mac app](#install-the-mac-app-no-terminal-needed). You need a Mac with macOS 13 or newer, the ChatGPT
 or Claude desktop app, and a Canvas account that lets students make access tokens. It's a personal tool: one
 student, their own courses, on their own Mac.
@@ -42,6 +43,33 @@ student, their own courses, on their own Mac.
    a search happened to find.
 5. **Stay current.** It updates in the background every few hours. Anything your instructor deletes or replaces
    moves to a dated `_Removed from Canvas` folder instead of being mixed in with current material.
+
+### Exam preparation in 1.7.0
+
+Choose **Prepare for exam** on a course card. Create a workspace with selected modules, optional date,
+format, and scope your instructor specified. The source inventory is visible; module selections include
+other course references such as syllabus and announcements. The selection remains unconfirmed exam scope.
+
+Copy the preparation request into your connected ChatGPT or Claude. The assistant reads originals, checks
+diagrams and equations, uses instructor notation and feedback, and saves practice through the connector.
+Refresh the workspace to practice inside Super Student: multiple-choice questions are scored against the
+saved AI answer key; written answers show a worked answer for your own assessment. Mistakes and due reviews
+rise to the top, with saved attempts and a simple spaced review schedule. Changed, removed or restricted
+sources disable affected practice until new questions are generated. Your library stays local.
+
+Extracted text is tied to the exact original file used during conversion. Older extracted files need one
+update to establish that link. A changed original or source ZIP blocks its previous text from supplying
+new practice until conversion completes again.
+
+Every question requires exact supporting quotations at unique source locators. This proves quotations exist
+in current local source text, **not** that an AI answer is logically correct. Search can combine up to four
+supplied alternate phrasings; it does not use embeddings or automatically search by meaning. The app still
+uses your external assistant to create questions and explain new topics.
+
+First-attempt quiz performance, self-assessment, and saved source-note coverage are separate. None is proof
+of mastery or a prediction of an exam grade. No comparative answer-quality or learning study against
+NotebookLM has been completed. Run the authored retrieval/evidence benchmark described in
+[benchmarks/README.md](benchmarks/README.md) to reproduce the limited offline checks.
 
 | Setup | Search across everything |
 |---|---|
@@ -204,11 +232,12 @@ Super Student gives the AI two more things:
 
 - **`OUTLINE.md`** in each course: every module, document, slide and page in the instructor's order, with
   pictures marked. The AI scopes a review from it and checks nothing in scope was left out.
-- **The study pass.** Paste the request from the app ("Study pass" panel, **Copy the request**) into ChatGPT
+- **The study pass.** Paste the request from the app ("Source notes" panel, **Copy the request**) into ChatGPT
   or Claude. The AI works through the course in order: reads each document all the way through, looks at
   every slide and page with pictures, describes the pictures, and saves notes that cite every slide or page
   (`study_progress`, `save_study_notes`). Super Student checks the notes against the document and lists any
-  slides or pages they skipped, flags documents that changed since, and tracks module and course notes.
+  missing slide or page references, flags documents that changed since, and tracks module and course notes.
+  Reference coverage does not verify reading, understanding, or student learning.
   Notes go in `<course>/Study Notes/`, are searchable, and ride along in exam packs.
 
 For broad questions the AI then reads the notes for everything in scope and opens the sources for detail,
@@ -371,3 +400,15 @@ access token in Canvas (Account → Settings → Approved Integrations).
 - `python tests/test_high_priority.py` checks exact-origin credentials, external symlinks across library tools,
   safe download staging, stale/restricted sources, interrupted syncs, content hashes and derived-note freshness.
   It uses temporary libraries, dummy credentials and local test servers; it never contacts a real Canvas account.
+- `python tests/test_exam_retrieval.py` checks alternate-query search, exact course boundaries, source quotations,
+  unique locators, fingerprints, and evidence-cache invalidation.
+- `python tests/test_exams.py` checks exam scope, hidden answers, scoring, self-assessment, scheduled review,
+  stale sources, and safe local storage.
+- `python tests/test_exam_workflow.py` checks the exam workflow through the real local HTTP and MCP interfaces.
+- `python tests/test_extraction_evidence.py` checks conversion provenance, unchanged-timestamp edits, ZIP
+  member refresh and recording refresh using temporary files and mocked downloads/transcription.
+- `python benchmarks/exam_retrieval.py --require-improvement` runs the authored offline retrieval/evidence
+  benchmark. Its limits are described in [benchmarks/README.md](benchmarks/README.md).
+
+Set `SUPERSTUDENT_NO_SOFFICE=1` to skip optional LibreOffice launches when testing in an environment where
+LibreOffice is unavailable or unstable. The built-in slide renderer is still exercised.

@@ -576,9 +576,9 @@ def ai_layer(fake) -> None:
     notes_text = "Slide 2: immunization matches sensitivities. The worked examples cover coupons and the liquidity premium. " * 3
     check(notes.save(lib, rel, notes_text, by="Claude")["ok"], "notes saved for the test document")
     status = notes.status_fn(lib)
-    check(status(rel) == "studied", "studied document marked studied")
+    check(status(rel) == "current referenced notes", "current referenced notes are labeled accurately")
     doc.write_text(LOCATOR_DOC + "\n## Slide 3\n\nA new slide about key-rate durations.\n", encoding="utf-8")
-    check(notes.status_fn(lib)(rel) == "changed since studied", "a document changed after studying is flagged in the outline")
+    check(notes.status_fn(lib)(rel) == "changed since notes saved", "a changed source is flagged in the outline")
     r = notes.save(lib, rel, "Slide 2 " + "x" * 210000, by="Claude")
     check(not r["ok"] and "most one save can hold" in r["message"], "notes too long are refused, not cut short")
 
@@ -655,7 +655,7 @@ def ai_layer(fake) -> None:
         blocked = False
     except FileNotFoundError:
         blocked = True
-    check(blocked and "Studied" in call("study_progress", course="FIN"), "…can't be read, and don't break the study pass")
+    check(blocked and "Current notes" in call("study_progress", course="FIN"), "…can't be read, and don't break the notes workflow")
     link_md.unlink()
 
     for text, want in (("The final value of the bond", False), ("the test statistic", False), ("comprehensive income", False),

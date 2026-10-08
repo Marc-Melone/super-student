@@ -7,6 +7,7 @@ Started by the assistant itself via `python -m superstudent mcp`; `superstudent 
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import subprocess
@@ -37,7 +38,7 @@ How to study each document:
 3. save_study_notes(path, notes, described_by). Cite a slide/page for every point. Sections: Summary; Key terms
    (as the course defines them); Main ideas; Formulas, processes and steps; Figures and diagrams (what each
    shows, every label, the takeaway); Examples and worked problems; What the instructor emphasized; Likely
-   exam questions. If slides/pages are reported as skipped, cover them and save again.
+   practice questions. If page/slide references are missing, check those sources and save again.
 4. When a module's documents are all done, save module notes for the module folder (how the pieces fit,
    with its lectures); when every module is done, save course notes for the course folder.
 Write only from the materials; say when something is unreadable."""
@@ -139,16 +140,19 @@ def build_server():
         return "Courses in the Super Student library:\n" + "\n".join(lines)
 
     @tool()
-    def search_course_materials(query: str, course: str = "", kind: str = "", limit: int = 8) -> str:
+    def search_course_materials(query: str, course: str = "", kind: str = "", limit: int = 8,
+                                alternate_queries: List[str] = []) -> str:
         """Ranked full-text search of all course materials. Try several phrasings and the course's own
-        terms. `course`: part of a name/code/folder. `kind`: slides, lecture, reading, pdf, document, spreadsheet,
+        terms. Supply up to four alternate_queries with synonyms or course terminology to combine rankings.
+        `course`: part of a name/code/folder. `kind`: slides, lecture, reading, pdf, document, spreadsheet,
         page, assignment, quiz, announcement, discussion, syllabus, grades, exam, overview, notes."""
         from .index import search
 
         lib = _lib()
         if course and not _find_course(lib, course):
             return f"No course matching {course!r}. " + list_courses()
-        hits = search(lib, query, course=course, kind=kind, limit=max(1, min(int(limit or 8), 25)))
+        hits = search(lib, query, course=course, kind=kind, limit=max(1, min(int(limit or 8), 25)),
+                      alternate_queries=alternate_queries)
         if not hits:
             return (f"No matches for {query!r}" + (f" in {course!r}" if course else "") +
                     ". Try other wording, fewer words, or drop the filters.")
@@ -328,12 +332,13 @@ def build_server():
         info = progress(_lib(), course=course, limit=max(1, min(int(limit or 8), 30)))
         if not info["courses"]:
             return "No matching courses in the library. " + list_courses()
-        out = [f"Studied {info['done']} of {info['docs']} documents."]
+        out = [f"Current notes with page/slide references: {info['done']} of {info['docs']} documents. "
+               "Reference coverage does not verify reading, understanding, or student mastery."]
         for c in info["courses"]:
             mods_done = sum(1 for m in c["modules"] if m["status"] == "done")
-            out.append(f"\n{c['label']} (folder: {c['folder']}): {c['done']} of {c['docs']} documents studied"
-                       + (f", {c['partial']} with notes that skip slides or pages" if c["partial"] else "")
-                       + (f", {c['changed']} changed since studied" if c["changed"] else "")
+            out.append(f"\n{c['label']} (folder: {c['folder']}): {c['done']} of {c['docs']} documents with current referenced notes"
+                       + (f", {c['partial']} with notes missing page/slide references" if c["partial"] else "")
+                       + (f", {c['changed']} changed since notes were saved" if c["changed"] else "")
                        + f". Module notes: {mods_done} of {len(c['modules'])}. Course notes: {c['course_notes']}.")
             for i, t in enumerate(c["todo"], 1):
                 size = f"{t['units']} slides/pages" if t["units"] else "text"
@@ -354,7 +359,8 @@ def build_server():
     def save_study_notes(path: str, notes: str, described_by: str = "") -> str:
         """Save study notes for a document you fully read and viewed, a module folder (module notes) or a
         course folder (course notes). Cite a slide or page for every point ('Slide 12', 'Slides 3-5', 'Page 7');
-        skipped slides or pages are reported back. `described_by`: your name."""
+        missing page/slide mentions are reported back. This does not verify comprehension.
+        `described_by`: your name."""
         from .notes import save
 
         result = save(_lib(), path, notes, by=described_by)
@@ -365,6 +371,53 @@ def build_server():
         """Last sync, whether one is running, videos waiting for transcripts, recent problems."""
         lib = _lib()
         return _status_text(lib)
+
+    @tool()
+    def exam_plans(course: str = "", plan_id: str = "") -> str:
+        """List saved exam workspaces, or read one with its source inventory, questions and review priorities.
+        Scope is selected by the student and needs checking against instructor announcements. Quiz accuracy
+        and self-assessed review are separate; neither is a mastery prediction."""
+        from . import exams
+        result = exams.get_plan(_lib(), plan_id) if plan_id else exams.list_plans(_lib(), course)
+        return PREFIX + json.dumps(result, ensure_ascii=False)
+
+    @tool(read_only=False)
+    def create_exam_plan(course: str, title: str, modules: List[int] = [], exam_date: str = "",
+                         format: str = "", scope_note: str = "") -> str:
+        """Create an exam workspace for one unambiguous course and selected module positions (empty=whole course).
+        Copy date, format and scope from the student's request; do not invent instructor coverage or weights.
+        Read inventory, exam announcements, syllabus and feedback before writing questions."""
+        from .exams import create_plan
+        return json.dumps(create_plan(_lib(), course, title, modules=modules, exam_date=exam_date,
+                                      format=format, scope_note=scope_note), ensure_ascii=False)
+
+    @tool()
+    def check_source_evidence(course: str, citations: List[dict]) -> str:
+        """Check exact source quotations before citing course claims or making practice. Each citation needs
+        path, exact unique locator and quote. Rejects generated notes, summaries and unavailable sources.
+        A valid quote proves text exists in a current source; judge whether it supports the claim yourself."""
+        from .evidence import validate_evidence
+        from .index import course_folders
+        lib = _lib()
+        folders = course_folders(lib, course)
+        exact = [f for f in folders if f == course]
+        if exact:
+            folders = exact
+        if len(folders) != 1:
+            return json.dumps({"valid": False, "errors": ["Choose one exact course folder from list_courses."]})
+        return PREFIX + json.dumps(validate_evidence(lib, folders[0], citations), ensure_ascii=False)
+
+    @tool(read_only=False)
+    def save_exam_questions(plan_id: str, questions: List[dict]) -> str:
+        """Add source-cited practice to a saved exam workspace. Read originals and check images first.
+        Each question: topic, prompt, type (mcq|short_answer), answer, explanation, difficulty
+        (recall|application|transfer), citations [{path,locator,quote}]. MCQ also choices and correct_index
+        (zero based). Exact quotes must support the answer and lie within selected sources. Explain distractors
+        and common mistakes using instructor notation. Use readable plain text and Unicode formulas in fields.
+        Mix recall, worked applications and unfamiliar problems.
+        The app verifies quote location/freshness, not reasoning correctness. Never label AI practice official."""
+        from .exams import save_questions
+        return json.dumps(save_questions(_lib(), plan_id, questions), ensure_ascii=False)
 
     @tool(read_only=False, open_world=True)
     def start_sync(course: str = "") -> str:

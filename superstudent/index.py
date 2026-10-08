@@ -260,12 +260,31 @@ def _terms(query: str) -> Tuple[List[str], List[str]]:
 
 
 def search(lib, query: str, course: str = "", kind: str = "", limit: int = 10, per_doc: int = 3,
-           markers: tuple = ("**", "**")) -> List[Dict[str, Any]]:
+           markers: tuple = ("**", "**"), alternate_queries: Optional[List[str]] = None) -> List[Dict[str, Any]]:
+    """Search literal course text, optionally combining up to four alternate phrasings.
+
+    Alternates are supplied by the caller; this is not embedding or semantic search. Each phrasing gets its
+    own candidate pool before reciprocal-rank fusion, so a broad partial match cannot fill the result limit
+    before a useful alternate is searched. Complete-term matches rank before partial matches, with the
+    existing current-before-removed ordering and per-document cap applied after fusion.
+    """
+    if alternate_queries is not None and (not isinstance(alternate_queries, list) or len(alternate_queries) > 4 or
+            any(not isinstance(q, str) or not q.strip() or len(q) > 512 for q in alternate_queries)):
+        raise ValueError("Provide at most four nonempty alternate queries, each at most 512 characters.")
+    if limit <= 0 or per_doc <= 0:
+        return []
     if not lib.index_path.exists():
         return []
     from . import describe
-    fts, _ = _terms(query)
-    if not fts:
+    query_terms = []
+    seen_terms = set()
+    for q in [query] + (alternate_queries or []):
+        terms, _ = _terms(q)
+        key = tuple(sorted(t.casefold() for t in terms))
+        if terms and key not in seen_terms:
+            query_terms.append((q, terms))
+            seen_terms.add(key)
+    if not query_terms:
         return []
     if describe.load(lib):
         update_index(lib)  # visual originals can change without changing the sidecar's mtime or size
@@ -276,7 +295,7 @@ def search(lib, query: str, course: str = "", kind: str = "", limit: int = 10, p
     if course:
         folders = course_folders(lib, course)
         if folders:
-            filters.append("(" + " OR ".join("path LIKE ?" for _ in folders) + ")")
+            filters.append("(" + " OR ".join("path LIKE ? ESCAPE '\\'" for _ in folders) + ")")
             params += [_like_prefix(f) for f in folders]
         else:
             filters.append("(course LIKE ? OR path LIKE ?)")
@@ -291,36 +310,56 @@ def search(lib, query: str, course: str = "", kind: str = "", limit: int = 10, p
     sql = ("SELECT path, doc_title, locator, course, kind, snippet(chunks, 0, ?, ?, ' … ', 48), "
            "bm25(chunks, 1.0, 3.0), chunk FROM chunks WHERE chunks MATCH ?" + where +
            " ORDER BY bm25(chunks, 1.0, 3.0) LIMIT ?")
-    results: List[Dict[str, Any]] = []
-    seen = set()
-    per_path: Dict[str, int] = {}
-    strategies = [" AND ".join(fts)]
-    if len(fts) > 1:
-        strategies.append(" OR ".join(fts))
-    for match in strategies:
-        try:
-            rows = conn.execute(sql, [markers[0], markers[1], match] + params + [limit * 4]).fetchall()
-        except sqlite3.OperationalError:
-            continue
-        for path, title, locator, crs, knd, snip, score, chunk in rows:
-            target = lib.resolve(path)
-            if target is None or not target.is_file():
-                continue
-            key = (path, locator, chunk)
-            if key in seen or per_path.get(path, 0) >= per_doc:
-                continue
-            seen.add(key)
-            per_path[path] = per_path.get(path, 0) + 1
-            results.append({"path": path, "title": title, "locator": locator, "course": crs, "kind": knd,
-                            "snippet": re.sub(r"\s+", " ", snip).strip(), "score": round(-score, 3),
-                            "match": "all words" if match == strategies[0] else "some words",
-                            "removed": is_removed(path), **material_status(lib, path, state)})
-        if sum(1 for r in results if not r["removed"]) >= limit:
-            break
-    conn.close()
+    candidates: Dict[Tuple[str, str, int], Dict[str, Any]] = {}
+    candidate_limit = min(800, max(32, limit * 8))
+    try:
+        for phrasing, fts in query_terms:
+            strategies = [(" AND ".join(fts), True)]
+            if len(fts) > 1:
+                strategies.append((" OR ".join(fts), False))
+            query_seen = set()
+            for match, complete in strategies:
+                try:
+                    rows = conn.execute(sql, [markers[0], markers[1], match] + params + [candidate_limit]).fetchall()
+                except sqlite3.OperationalError:
+                    continue
+                for rank, (path, title, locator, crs, knd, snip, score, chunk) in enumerate(rows, 1):
+                    key = (path, locator, chunk)
+                    if key in query_seen:
+                        continue
+                    target = lib.resolve(path)
+                    if target is None or not target.is_file():
+                        continue
+                    query_seen.add(key)
+                    hit = candidates.get(key)
+                    if hit is None:
+                        hit = {"path": path, "title": title, "locator": locator, "course": crs, "kind": knd,
+                               "snippet": re.sub(r"\s+", " ", snip).strip(), "score": round(-score, 3),
+                               "match": "all words" if complete else "some words", "removed": is_removed(path),
+                               "retrieval_score": 0.0, "matched_queries": []}
+                        candidates[key] = hit
+                    elif complete and hit["match"] != "all words":
+                        hit.update(match="all words", snippet=re.sub(r"\s+", " ", snip).strip(),
+                                   score=round(-score, 3))
+                    hit["retrieval_score"] += (1.0 if complete else 0.35) / (60 + rank)
+                    hit["matched_queries"].append(phrasing)
+    finally:
+        conn.close()
     # What's currently in the course comes first; copies of things removed from Canvas come after, labeled.
-    results.sort(key=lambda r: r["removed"])
-    return results[:limit]
+    ranked = sorted(candidates.values(), key=lambda r: (r["removed"], r["match"] != "all words",
+                                                       -r["retrieval_score"]))
+    results: List[Dict[str, Any]] = []
+    per_path: Dict[str, int] = {}
+    for hit in ranked:
+        if per_path.get(hit["path"], 0) >= per_doc:
+            continue
+        per_path[hit["path"]] = per_path.get(hit["path"], 0) + 1
+        hit["retrieval_score"] = round(hit["retrieval_score"], 6)
+        hit.update(material_status(lib, hit["path"], state))
+        results.append(hit)
+        if len(results) >= limit:
+            break
+    return results
 
 
 def is_removed(path: str) -> bool:
@@ -411,8 +450,12 @@ def course_folders(lib, course: str) -> List[str]:
     want = _simple(course)
     if not want:
         return []
+    registered = lib.load_state().get("courses", {})
+    exact = [c["folder"] for c in registered.values() if c.get("folder") == course]
+    if exact:
+        return list(dict.fromkeys(exact))
     out = []
-    for cid, c in lib.load_state().get("courses", {}).items():
+    for cid, c in registered.items():
         folder = c.get("folder") or ""
         if folder and want in _simple(f"{cid} {c.get('name', '')} {c.get('code', '')} {folder}"):
             out.append(folder)
@@ -420,7 +463,7 @@ def course_folders(lib, course: str) -> List[str]:
 
 
 def _like_prefix(folder: str) -> str:
-    return folder + "/%"
+    return folder.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "/%"
 
 
 def list_documents(lib, course: str = "", kind: str = "") -> List[Dict[str, Any]]:
@@ -432,7 +475,7 @@ def list_documents(lib, course: str = "", kind: str = "") -> List[Dict[str, Any]
     if course:
         folders = course_folders(lib, course)
         if folders:
-            sql += " AND (" + " OR ".join("path LIKE ?" for _ in folders) + ")"
+            sql += " AND (" + " OR ".join("path LIKE ? ESCAPE '\\'" for _ in folders) + ")"
             params += [_like_prefix(f) for f in folders]
         else:
             sql += " AND (course LIKE ? OR path LIKE ?)"

@@ -93,7 +93,7 @@ def main() -> None:
     check("Locked answers.pdf** (Not downloaded" in outline, "files that couldn't be copied say why")
     check("(no extractable text" not in outline, "no placeholder text used as page titles")
     check("Slide 1: Posterior shoulder muscles [picture]" in outline and "## My Files" in outline, "student's own files too")
-    check("notes: not studied" in outline, "study status shown")
+    check("notes: no current notes" in outline, "notes status shown")
     from superstudent.index import search
 
     check(not any(h["path"].endswith("OUTLINE.md") for h in search(lib, "Bond Basics", limit=20)),
@@ -116,7 +116,7 @@ def main() -> None:
     r = notes.save(lib, deck_rel, partial, by="Claude")
     check(r["ok"] and r["missed"] == ["Slide 4", "Slide 5"] and "Slides 4-5" in r["message"],
           "notes that skip slides are saved but flagged", r)
-    check(notes.doc_status(notes.load(lib), notes._load(lib, lib.root / (deck_rel + ".md"), "")) == "skips Slides 4-5",
+    check(notes.doc_status(notes.load(lib), notes._load(lib, lib.root / (deck_rel + ".md"), "")) == "missing references: Slides 4-5",
           "status shows what was skipped")
     full = partial + ("\n\n## Nerve pathway\nC5 root to upper trunk to suprascapular nerve (Slide 4).\n\n## Summary slide\n"
                       "SITS mnemonic; deltoid is not part of the cuff (Slide 5).\n\n## Likely exam questions\n"
@@ -131,7 +131,7 @@ def main() -> None:
           "notes say who wrote them and link the source")
     hits = search(lib, "SITS mnemonic deltoid cuff")
     check(any(h["path"] == r["file"] for h in hits), "notes are searchable", [h["path"] for h in hits[:3]])
-    check("notes: studied" in (fin / "OUTLINE.md").read_text(), "outline updated with the notes status")
+    check("notes: current referenced notes" in (fin / "OUTLINE.md").read_text(), "outline updated with the notes status")
 
     for bad, why in (("../../etc/passwd", "outside"), (fin.relative_to(lib.root).as_posix() + "/OUTLINE.md", "generated"),
                      (deck_rel, "short")):
@@ -160,7 +160,7 @@ def main() -> None:
     # a document that changes after it was studied
     side = lib.root / (deck_rel + ".md")
     side.write_text(side.read_text().replace("SITS muscles", "SITS muscles (updated)"))
-    check(notes.doc_status(notes.load(lib), notes._load(lib, side, "")) == "changed since studied",
+    check(notes.doc_status(notes.load(lib), notes._load(lib, side, "")) == "changed since notes saved",
           "documents that change are flagged for another look")
 
     print("\n== Exam packs carry slides as PDFs and the notes")
@@ -248,7 +248,8 @@ async def mcp_check(lib, deck_rel: str) -> None:
             check({"study_progress", "save_study_notes"} <= names, "connector offers the study tools")
             res = await session.call_tool("study_progress", {"course": "FIN", "limit": 3})
             text = res.content[0].text
-            check("Studied" in text and "path:" in text and "Course notes:" in text, "study_progress lists the next documents", text[:400])
+            check("Reference coverage does not verify" in text and "path:" in text and "Course notes:" in text,
+                  "study_progress lists documents and limits the coverage claim", text[:400])
             res = await session.call_tool("course_file", {"course": "FIN 6100", "file": "outline"})
             check("everything in the course" in res.content[0].text, "outline through course_file")
             res = await session.call_tool("course_file", {"course": "FIN 6100", "file": "notes"})
@@ -265,7 +266,7 @@ async def mcp_check(lib, deck_rel: str) -> None:
             size = sum(len(json.dumps({"n": t.name, "d": t.description,
                                        "s": getattr(t, "input_schema", None) or getattr(t, "inputSchema", None)}))
                        for t in tools) // 4
-            check(size < 1600, "tool definitions stay compact (they're sent with every message)", size)
+            check(size < 3400, "tool definitions including exam prep stay bounded", size)
             res = await session.call_tool("save_study_notes", {"path": deck_rel, "notes": "Short.", "described_by": "Claude"})
             check("too short" in res.content[0].text, "connector passes on refusals")
 

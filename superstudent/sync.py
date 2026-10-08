@@ -27,6 +27,7 @@ import re
 import shutil
 import threading
 import time
+import zipfile
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
@@ -41,7 +42,7 @@ from .extract import EXTRACTOR_VERSION, MEDIA_EXT, extract, kind_of
 from .library import Library
 from .media import (Segment, Transcriber, TranscriberUnavailable, extract_keyframes, fmt_ts, media_duration, parse_captions,
                     pick_media_source, transcript_markdown, youtube_title, youtube_transcript)
-from .util import (REMOVED_DIR, add_suffix, atomic_write_text, day_key, fmt_date, fmt_dt, front_matter, human_size,
+from .util import (REMOVED_DIR, add_suffix, atomic_write_text, day_key, file_digest, fmt_date, fmt_dt, front_matter, human_size,
                    now_iso, parse_dt, parse_front_matter, read_json, safe_name, truncate)
 
 COURSE_INCLUDES = ["term", "teachers", "syllabus_body", "total_scores"]
@@ -173,11 +174,11 @@ class Syncer:
             if job.get("done"):
                 continue
             cs = job["course"]
-            if not (self.transcriber and self.transcriber.available):
+            if not job.get("captions") and not (self.transcriber and self.transcriber.available):
                 cs.media_pending(job, "no captions on Canvas, and local transcription isn't installed "
                                       "(run: superstudent doctor)")
                 continue
-            if backend_problem:
+            if backend_problem and not job.get("captions"):
                 cs.media_pending(job, backend_problem)
                 continue
             if time.time() - started > budget:
@@ -1379,6 +1380,59 @@ class CourseSync:
                 except Exception as exc:
                     self.warn(f"File processing error: {exc}")
 
+    def _extraction_current(self, original: Path, sidecar: Path) -> bool:
+        """Legacy text and text extracted from different bytes must be rebuilt, even with the same stamp."""
+        try:
+            original, sidecar = self.s.lib.checked(original), self.s.lib.checked(sidecar)
+            meta, _ = parse_front_matter(sidecar.read_text(encoding="utf-8"))
+            expected = meta.get("source_sha256")
+            if not expected or expected != file_digest(original):
+                return False
+            if meta.get("type") == "archive":
+                directory = self.s.lib.checked(original.parent / (original.name + " (unzipped)"))
+                total = 0
+                with zipfile.ZipFile(original) as archive:
+                    for member in [m for m in archive.infolist() if not m.is_dir()][:2000]:
+                        name = member.filename.replace("\\", "/")
+                        if name.startswith("__MACOSX/") or name.split("/")[-1].startswith("."):
+                            continue
+                        total += member.file_size
+                        if total > 1024 * 1024 * 1024:
+                            break
+                        parts = [safe_name(part, 80) for part in name.split("/") if part not in ("", ".", "..")]
+                        if not parts:
+                            continue
+                        child = self.s.lib.checked(directory.joinpath(*parts))
+                        if not child.is_file():
+                            return False
+                        if kind_of(child) in ("media", "archive", "unknown"):
+                            continue
+                        child_sidecar = self.s.lib.checked(child.with_name(child.name + ".md"))
+                        child_meta, _ = parse_front_matter(child_sidecar.read_text(encoding="utf-8"))
+                        if (child_meta.get("source_archive") != original.relative_to(self.s.lib.root).as_posix()
+                                or child_meta.get("source_archive_sha256") != expected
+                                or not self._extraction_current(child, child_sidecar)):
+                            return False
+            return True
+        except (OSError, UnicodeError, zipfile.BadZipFile):
+            return False
+
+    def _extract_bound(self, original: Path, content_type: Optional[str] = None):
+        """Bind new extracted text to the original read by the extractor, never to a later replacement."""
+        with self.s.extract_lock:  # PyMuPDF isn't thread-safe
+            original = self.s.lib.checked(original)
+            before = self._source_stamp(original)
+            digest = file_digest(original)
+            result = extract(original, content_type)
+            after = self._source_stamp(original)
+            if (before != after or file_digest(self.s.lib.checked(original)) != digest):
+                raise OSError("The source changed during text extraction; retry the update.")
+            return result, digest
+
+    def _source_stamp(self, path: Path):
+        st = self.s.lib.checked(path).stat()
+        return st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns
+
     def _process_one(self, fid: str, meta: Dict[str, Any], rel: str, prev: Dict[str, Any]) -> None:
         key = f"file:{fid}"
         it = self.item(key)
@@ -1406,7 +1460,8 @@ class CourseSync:
             self._mark_file_status(sidecar, "restricted")
             self.bump("files_locked")
             return
-        if have_file and prev.get("path") == rel and sidecar.exists() and prev.get("extractor") == EXTRACTOR_VERSION:
+        if (have_file and prev.get("path") == rel and sidecar.exists() and prev.get("extractor") == EXTRACTOR_VERSION
+                and self._extraction_current(original, sidecar)):
             self.bump("files_unchanged")
             return
         max_mb = float(self.cfg.get("max_file_mb") or 400)
@@ -1437,12 +1492,11 @@ class CourseSync:
         it.update(successful_stamp=stamp, last_successful_sync=now_iso())
         it.pop("stale", None)
         it.pop("error", None)
-        with self.s.extract_lock:  # PyMuPDF isn't thread-safe
-            try:
-                result = extract(original, meta.get("content-type") or it.get("content_type"))
-            except Exception as exc:
-                result = None
-                error = f"{exc.__class__.__name__}: {exc}"
+        try:
+            result, source_sha256 = self._extract_bound(original, meta.get("content-type") or it.get("content_type"))
+        except Exception as exc:
+            result = None
+            error = f"{exc.__class__.__name__}: {exc}"
         if result is None:
             it.update({"status": "ok", "extract_error": error, "stamp": stamp, "extractor": EXTRACTOR_VERSION})
             self._write(sidecar, front_matter(doc_meta) + f"# {title}\n\n_Couldn't extract text ({error}). "
@@ -1452,7 +1506,7 @@ class CourseSync:
             self._unpack(original, doc_meta, title)
             it.update({"status": "ok", "stamp": stamp, "extractor": EXTRACTOR_VERSION, "kind": "archive"})
             return
-        doc_meta.update({"type": result.kind, "length": result.units,
+        doc_meta.update({"type": result.kind, "length": result.units, "source_sha256": source_sha256,
                          "visual_content": ", ".join(result.visual_units[:40]) + ("…" if len(result.visual_units) > 40 else ""),
                          "notes": "; ".join(result.notes)})
         body = describe.merge_into(self.s.lib, original, result.body or "_No text found in this file._")
@@ -1507,7 +1561,8 @@ class CourseSync:
                                           "size": st.st_size, "contexts": ["My Files"],
                                           "is_video": path.suffix.lower() in VIDEO_EXT})
                 continue
-            if it.get("stamp") == stamp and sidecar.exists() and it.get("extractor") == EXTRACTOR_VERSION:
+            if (it.get("stamp") == stamp and sidecar.exists() and it.get("extractor") == EXTRACTOR_VERSION
+                    and self._extraction_current(path, sidecar)):
                 continue
             doc_meta = self.meta(path.name, "file", source_file=path.name, found_in="My Files")
             if kind == "archive":
@@ -1515,16 +1570,16 @@ class CourseSync:
                 it.update({"path": rel, "text": rel + ".md", "title": path.name, "stamp": stamp, "status": "ok",
                            "extractor": EXTRACTOR_VERSION, "kind": "archive"})
                 continue
-            with self.s.extract_lock:
-                try:
-                    result = extract(path)
-                    error = ""
-                except Exception as exc:
-                    result, error = None, f"{exc.__class__.__name__}: {exc}"
+            try:
+                result, source_sha256 = self._extract_bound(path)
+                error = ""
+            except Exception as exc:
+                result, error = None, f"{exc.__class__.__name__}: {exc}"
             if result is None:
                 body = f"_Couldn't extract text ({error})._"
             else:
-                doc_meta.update({"type": result.kind, "length": result.units, "notes": "; ".join(result.notes),
+                doc_meta.update({"type": result.kind, "length": result.units, "source_sha256": source_sha256,
+                                 "notes": "; ".join(result.notes),
                                  "visual_content": ", ".join(result.visual_units[:40])})
                 body = describe.merge_into(self.s.lib, path, result.body or "_No text found in this file._")
             self._write(sidecar, front_matter(doc_meta) + f"# {path.name}\n\nOriginal file: {path.name}\n\n{body}\n")
@@ -1545,9 +1600,11 @@ class CourseSync:
         import zipfile
 
         archive = self.s.lib.checked(archive)
+        archive_digest = file_digest(archive)
         target = self.s.lib.checked(archive.parent / (archive.name + " (unzipped)"))
         listing = []
         total = 0
+        complete = True
         try:
             with zipfile.ZipFile(archive) as zf:
                 members = [m for m in zf.infolist() if not m.is_dir()][:2000]
@@ -1570,19 +1627,28 @@ class CourseSync:
                     listing.append("/".join(parts))
                     kind = kind_of(out)
                     if kind not in ("media", "archive", "unknown"):
-                        with self.s.extract_lock:
-                            try:
-                                res = extract(out)
-                            except Exception:
-                                continue
+                        try:
+                            res, source_sha256 = self._extract_bound(out)
+                        except Exception:
+                            complete = False
+                            continue
                         inner_meta = dict(doc_meta)
                         inner_meta.update({"title": out.name, "type": res.kind, "source_file": out.name,
+                                           "source_sha256": source_sha256,
+                                           "source_archive": archive.relative_to(self.s.lib.root).as_posix(),
+                                           "source_archive_sha256": archive_digest,
                                            "found_in": f"{title} (zip)", "length": res.units})
                         self._write(out.parent / (out.name + ".md"),
                                           front_matter(inner_meta) + f"# {out.name}\n\n" + (res.body or "_No text._") + "\n")
         except (zipfile.BadZipFile, OSError) as exc:
+            complete = False
             listing.append(f"(couldn't unpack: {exc})")
+        if file_digest(self.s.lib.checked(archive)) != archive_digest:
+            raise OSError("The archive changed while unpacking; retry the update.")
         doc_meta.update({"type": "archive"})
+        doc_meta.pop("source_sha256", None)
+        if complete:
+            doc_meta["source_sha256"] = archive_digest
         self._write(archive.parent / (archive.name + ".md"), front_matter(doc_meta) + f"# {title}\n\n"
                           f"Unpacked into '{target.name}/':\n\n" + "\n".join(f"- {x}" for x in listing[:500]) + "\n")
 
@@ -1603,7 +1669,14 @@ class CourseSync:
             self._mark_file_status(out, "restricted")
             job["done"] = True
             return True
-        if it.get("status") == "ok" and not it.get("stale") and out.exists() and it.get("stamp") == job.get("stamp"):
+        original = self.s.lib.checked(Path(job["local_path"]) if job.get("local_path") else out.with_name(out.name[:-3]))
+        needs_binding = bool(job.get("local_path") or original.is_file())
+        if out.is_file() and not needs_binding:
+            out_meta, _ = parse_front_matter(out.read_text(encoding="utf-8"))
+            needs_binding = bool(out_meta.get("source_file") or out_meta.get("source_sha256"))
+        binding_current = not needs_binding or self._extraction_current(original, out)
+        if (it.get("status") == "ok" and not it.get("stale") and out.exists()
+                and it.get("stamp") == job.get("stamp") and binding_current):
             job["done"] = True
             return True
         if job["type"] == "youtube" and it.get("status") == "failed" and int(it.get("attempts") or 0) >= 3:
@@ -1620,7 +1693,8 @@ class CourseSync:
         return text[:700]
 
     def _write_transcript(self, job: Dict[str, Any], segments: List[Segment], source: str,
-                          frames: Optional[list] = None, duration: Optional[float] = None, extra: str = "") -> None:
+                          frames: Optional[list] = None, duration: Optional[float] = None, extra: str = "",
+                          source_file: str = "", source_sha256: str = "") -> None:
         out = self.s.lib.checked(self.dir / job["rel_md"])
         feedback = all(str(c).startswith("Feedback on:") for c in job.get("contexts") or ["x"])
         meta = self.meta(job["title"], "feedback" if feedback else "transcript", source=source,
@@ -1628,6 +1702,8 @@ class CourseSync:
                          found_in=", ".join(job.get("contexts") or [])[:300],
                          screen_snapshots=len(frames or []) or None,
                          canvas_url=self.canvas_url("file", job["file_id"]) if job.get("file_id") else None)
+        if source_file and source_sha256:
+            meta.update(source_file=source_file, source_sha256=source_sha256)
         header = f"# {job['title']} (transcript)\n\nSource: {source}."
         if frames:
             header += (" Screen snapshots are linked where the picture changed; open them to see the slide, "
@@ -1702,7 +1778,8 @@ class CourseSync:
         segments = self._captions(job)
         if segments:
             job["captions"] = segments
-            if not (self.cfg.get("screen_snapshots", True) and job.get("is_video")):
+            adjacent = self.s.lib.checked(self.dir / job["rel_md"][:-3])
+            if not adjacent.is_file() and not (self.cfg.get("screen_snapshots", True) and job.get("is_video")):
                 self._write_transcript(job, segments, "Canvas captions")
 
     def media_pending(self, job: Dict[str, Any], reason: str) -> None:
@@ -1775,7 +1852,8 @@ class CourseSync:
                                              "(max_media_mb in settings), so there are no screen snapshots._")
                 return
             raise DownloadError(f"too large to download ({human_size(size)}; the limit is max_media_mb = {max_mb:g} MB)")
-        keep = bool(self.cfg.get("keep_media_files")) and job.get("rel_media")
+        paired = self.s.lib.checked(self.dir / job["rel_md"][:-3])
+        keep = bool(self.cfg.get("keep_media_files") or paired.is_file()) and job.get("rel_media")
         tmp_dir = self.s.lib.checked(self.s.lib.meta / "tmp")
         tmp_dir.mkdir(parents=True, exist_ok=True)
         target = (self.dir / job["rel_media"]) if keep else tmp_dir / f"media-{abs(hash(job['key']))}{Path(job.get('rel_media') or job['title']).suffix or '.mp4'}"
@@ -1787,6 +1865,8 @@ class CourseSync:
     def _transcribe_file(self, job: Dict[str, Any], target: Path, keep: bool) -> None:
         target = self.s.lib.checked(target)
         try:
+            before = self._source_stamp(target)
+            source_sha256 = file_digest(target)
             duration = media_duration(target)
             segments = job.get("captions")
             source = "Canvas captions"
@@ -1801,7 +1881,11 @@ class CourseSync:
                 assets = self.s.lib.checked(self.dir / (rel_md[:-3] + ".assets"))
                 shutil.rmtree(assets, ignore_errors=True)
                 frames = extract_keyframes(target, assets)
-            self._write_transcript(job, segments, source, frames=frames, duration=duration)
+            if before != self._source_stamp(target) or file_digest(self.s.lib.checked(target)) != source_sha256:
+                raise OSError("The recording changed during transcription; retry the update.")
+            self._write_transcript(job, segments, source, frames=frames, duration=duration,
+                                   source_file=target.name if keep else "",
+                                   source_sha256=source_sha256 if keep else "")
         finally:
             if not keep:
                 try:

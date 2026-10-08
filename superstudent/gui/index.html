@@ -62,11 +62,12 @@ a { color: var(--blue); }
 .btn.destroy:hover { background: var(--bad); filter: brightness(.92); }
 .btn:disabled { opacity: .5; cursor: default; }
 .btn.big { padding: 12px 22px; font-size: 15px; }
-input[type=text], input[type=password], input[type=search], select {
+input[type=text], input[type=password], input[type=search], input[type=date], textarea, select {
   font: 15px/1.3 var(--sans); padding: 10px 12px; border: 1px solid var(--rule); border-radius: 8px;
   background: var(--sheet); color: var(--ink); width: 100%; min-width: 0;
 }
-input:focus, select:focus { outline: none; border-color: var(--blue); box-shadow: 0 0 0 3px var(--blue-soft); }
+input:focus, textarea:focus, select:focus { outline: none; border-color: var(--blue); box-shadow: 0 0 0 3px var(--blue-soft); }
+textarea { resize: vertical; line-height: 1.5; }
 select { width: auto; padding-right: 30px; }
 input[type=checkbox] { accent-color: var(--blue); width: 17px; height: 17px; margin: 0; flex: none; }
 input.switch {
@@ -810,7 +811,7 @@ function stepReady() {
 }
 
 /* ------------------------------------------------------------------ dashboard */
-const Q = { text: "", course: "", kind: "", hits: null, seq: 0 };
+const Q = { text: "", course: "", kind: "", alternates: [], hits: null, seq: 0 };
 
 function renderDashboard() {
   const syncBtn = el("button", { class: "btn primary", id: "syncbtn", onclick: () => startSync() }, "Update now");
@@ -827,10 +828,22 @@ function renderDashboard() {
     [["", "Everything"], ["slides", "Slides"], ["lecture", "Lecture recordings"], ["reading", "Readings and PDFs"], ["assignment", "Assignments"], ["announcement", "Announcements"]]
       .map(([v, t]) => el("option", { value: v, selected: Q.kind === v }, t)));
   kind.addEventListener("change", () => { Q.kind = kind.value; runSearch(input.value); });
+  const related = el("textarea", { rows: "3", maxlength: "2048", "aria-label": "Related search phrases", placeholder: "One phrase per line, up to four. For example: net present value\ndiscounted cash flow" });
+  related.value = Q.alternates.join("\n");
+  const expand = el("details", { style: "margin-bottom:16px", open: !!Q.alternates.length },
+    el("summary", { class: "small muted" }, "Add related search wording"),
+    el("p", { class: "help" }, "Use course terms or alternate phrases. Results are combined across these phrases; search does not invent synonyms."), related,
+    el("button", { class: "btn small", onclick: () => {
+      const phrases = related.value.split("\n").map(s => s.trim()).filter(Boolean);
+      if (phrases.length > 4 || phrases.some(s => s.length > 512)) { toast("Use up to four phrases, each under 512 characters.", true); return; }
+      if (!input.value.trim()) { toast("Enter your main search first.", true); input.focus(); return; }
+      Q.alternates = phrases; runSearch(input.value);
+    } }, "Search with these phrases"));
   return el("div", null, top,
     el("div", { class: "wrap" },
       el("div", { id: "attention" }),
       el("div", { class: "searchbar" }, el("div", { class: "field-wrap" }, svg(ICON.search), input), course, kind),
+      expand,
       el("div", { class: "grid" }, el("section", { id: "left", "aria-live": "polite" }), el("aside", { class: "side", id: "side" }))));
 }
 
@@ -910,6 +923,7 @@ function courseCard(c) {
     el("div", { class: "counts" }, bits.join(", ") || "Nothing copied yet",
       n.waiting ? el("div", { class: "wait" }, plural(n.waiting, "recording") + " waiting to be turned into text") : null),
     el("div", { class: "acts" },
+      el("button", { class: "btn primary small", onclick: () => openExams(c) }, "Prepare for exam"),
       el("button", { class: "btn quiet small", onclick: () => openPlace("course", c.folder) }, "Open folder"),
       el("button", { class: "btn quiet small", onclick: () => openPack(c) }, "Make exam pack")));
 }
@@ -919,6 +933,7 @@ async function runSearch(text) {
   const seq = ++Q.seq;
   if (!Q.text) { Q.hits = null; renderLeft(); return; }
   const params = new URLSearchParams({ q: Q.text, course: Q.course, kind: Q.kind });
+  Q.alternates.forEach(phrase => params.append("alternate", phrase));
   const r = await api("/api/search?" + params.toString());
   if (seq !== Q.seq) return;   // a newer search already ran
   Q.hits = r.ok ? r.hits : [];
@@ -928,7 +943,7 @@ async function runSearch(text) {
 function renderResults() {
   const clear = el("button", { class: "btn quiet small", onclick: () => { const i = document.getElementById("q"); i.value = ""; runSearch(""); i.focus(); } }, "Clear search");
   const head = el("div", { class: "section-head" }, el("h2", null, Q.hits.length ? plural(Q.hits.length, "result") : "No results"), el("span", { class: "spacer" }), clear);
-  if (!Q.hits.length) return [head, el("div", { class: "empty" }, el("p", null, "Nothing in your courses matches “" + Q.text + "”."), el("p", { class: "muted small", style: "margin:0" }, "Try fewer or different words, or pick All courses and Everything. Your AI app can also find things by meaning, not just exact words."))];
+  if (!Q.hits.length) return [head, el("div", { class: "empty" }, el("p", null, "Nothing in your courses matches “" + Q.text + "”."), el("p", { class: "muted small", style: "margin:0" }, "Try related search wording above, fewer words, or pick All courses and Everything. Your connected AI can suggest course terms to search."))];
   const byFolder = {};
   S.courses.forEach(c => { byFolder[c.folder] = c; });
   return [head, el("div", { class: "results" }, Q.hits.map(h => {
@@ -977,15 +992,14 @@ function studyPanel() {
   const v = S.visuals || { visuals: 0, described: 0 };
   if (!st.docs) return null;
   const left = st.docs - st.done;
-  const bar = el("div", { class: "meter", role: "img", "aria-label": st.done + " of " + st.docs + " documents studied" },
+  const bar = el("div", { class: "meter", role: "img", "aria-label": st.done + " of " + st.docs + " documents with current referenced notes" },
     el("span", { style: "width:" + Math.round(100 * st.done / st.docs) + "%" }));
-  return el("section", { class: "panel" }, el("h2", null, "Study pass"),
+  return el("section", { class: "panel" }, el("h2", null, "Source notes"),
     el("p", { class: "small", style: "margin-bottom:8px" },
-      left ? "Your AI has studied " + st.done + " of " + plural(st.docs, "document") + "."
-           : "Your AI has studied all " + plural(st.docs, "document") + "."),
+      "Current notes reference the pages or slides in " + st.done + " of " + plural(st.docs, "document") + "."),
     bar,
     v.visuals ? el("p", { class: "muted small", style: "margin-top:8px" }, v.described + " of " + plural(v.visuals, "picture") + " described.") : null,
-    el("p", { class: "muted small" }, "For broad review, your AI should know everything, not just what a search finds. Paste this request into ChatGPT or Claude: it reads every document, looks at every picture and saves notes, and Super Student checks nothing was skipped. It takes a few sessions for a full semester."),
+    el("p", { class: "muted small" }, "This checks saved page and slide references. It cannot prove your AI read or understood everything, or that you learned it. For broad review, ask your AI to read the sources and check the pictures; use exam practice to test yourself."),
     left || v.described < v.visuals ? el("button", { class: "btn small", onclick: () => copyText(STUDY_REQUEST) }, "Copy the request") : null);
 }
 
@@ -1037,12 +1051,30 @@ function sheet(title, build, opts) {
   const prev = document.activeElement;
   const id = "s" + Math.random().toString(36).slice(2);
   let scrim;
-  const close = () => { scrim.remove(); document.removeEventListener("keydown", onKey); if (prev && prev.focus) prev.focus(); if (opts.onClose) opts.onClose(); };
-  const onKey = e => { if (e.key === "Escape" && root.lastElementChild === scrim) close(); };
+  const close = () => {
+    scrim.remove(); document.removeEventListener("keydown", onKey);
+    if (root.lastElementChild) root.lastElementChild.inert = false;
+    else document.getElementById("app").inert = false;
+    if (prev && prev.isConnected && prev.focus) prev.focus();
+    else if (root.lastElementChild) root.lastElementChild.querySelector("h2").focus();
+    if (opts.onClose) opts.onClose();
+  };
+  const onKey = e => {
+    if (root.lastElementChild !== scrim) return;
+    if (e.key === "Escape") { close(); return; }
+    if (e.key !== "Tab") return;
+    const focusable = [...scrim.querySelectorAll("button:not(:disabled), input:not(:disabled), textarea:not(:disabled), select:not(:disabled), summary, [tabindex='0']")].filter(n => !n.hidden && n.getClientRects().length);
+    const first = focusable[0], last = focusable[focusable.length - 1];
+    if (!first) { e.preventDefault(); return; }
+    if (e.shiftKey && (document.activeElement === first || !focusable.includes(document.activeElement))) { e.preventDefault(); last.focus(); }
+    else if (!e.shiftKey && (document.activeElement === last || !focusable.includes(document.activeElement))) { e.preventDefault(); first.focus(); }
+  };
   const box = el("div", { class: "sheet" + (opts.wide ? " wide" : ""), role: "dialog", "aria-modal": "true", "aria-labelledby": id },
     el("div", { class: "sheet-head" }, el("h2", { id, tabindex: "-1" }, title), el("button", { class: "btn quiet close", "aria-label": "Close", onclick: () => close() }, "Close")),
     el("div", { class: "sheet-body" }, build(close)));
   scrim = el("div", { class: "scrim", onmousedown: e => { if (e.target === scrim) close(); } }, box);
+  document.getElementById("app").inert = true;
+  if (root.lastElementChild) root.lastElementChild.inert = true;
   root.append(scrim);
   document.addEventListener("keydown", onKey);
   setTimeout(() => { const f = box.querySelector(".sheet-body input[type=password], .sheet-body input[type=text]"); (f || box.querySelector("h2")).focus(); }, 40);
@@ -1099,6 +1131,170 @@ function openPack(c) {
       el("p", { class: "muted" }, "Copies the slides (as PDFs), readings and lecture transcripts into one folder you can drag into any chat, so the AI sees every slide as it was shown. Pick the modules your exam covers, or none for the whole course."),
       list, err, out,
       el("div", { class: "sheet-foot" }, el("button", { class: "btn", onclick: () => close() }, "Close"), make)];
+  }, { wide: true });
+}
+
+function examRequest(p) {
+  return "Use Super Student's exam_plans(plan_id=" + JSON.stringify(p.id) + ") for my " + p.title +
+    ". Check the selected inventory against my instructor's exam announcements, syllabus, format and feedback; state any uncertain scope or unreadable sources. " +
+    "Read the original sources and view diagrams and equations before writing practice. Use search_course_materials with alternate_queries for course terminology. " +
+    "Create a balanced set of recall, application and unfamiliar transfer problems using the instructor's definitions, notation and worked-example style. " +
+    "Prioritize any mistakes already recorded, while covering every selected topic. Use save_exam_questions with this plan_id. " +
+    "Each question needs topic, prompt, type (mcq or short_answer), answer, explanation, difficulty (recall/application/transfer), and citations with exact path, unique locator and a short exact supporting quote. " +
+    "MCQs also need choices and a zero-based correct_index. Explain the reasoning and common mistakes; verify that the quoted passages support the answer. " +
+    "The app checks quote location and source changes; it does not verify reasoning. Label practice as AI-generated, never official or guaranteed exam coverage. Tell me what remains uncovered, then I will practice inside Super Student.";
+}
+
+function openExams(c) {
+  sheet("Exam preparation · " + (c.code || c.name), close => {
+    const body = el("div");
+    const error = el("p", { class: "err", role: "alert" });
+    const title = el("input", { type: "text", value: "Exam review", maxlength: "160", "aria-label": "Exam name" });
+    const date = el("input", { type: "date", "aria-label": "Exam date (optional)" });
+    const format = el("input", { type: "text", placeholder: "For example: multiple choice, calculations, no calculator", "aria-label": "Exam format", maxlength: "1000" });
+    const note = el("textarea", { rows: "3", placeholder: "What your instructor said the exam covers; topics to focus on", "aria-label": "Scope and focus" });
+    const picked = new Set();
+    const modules = el("div", { class: "choices", style: "max-height:180px;overflow:auto" }, (c.modules || []).map(m => {
+      const cb = el("input", { type: "checkbox" });
+      cb.onchange = () => cb.checked ? picked.add(m.position) : picked.delete(m.position);
+      return el("label", { class: "choice" }, cb, el("div", null, m.name || "Module " + m.position));
+    }));
+    const create = el("button", { class: "btn primary", onclick: async () => {
+      create.disabled = true; error.textContent = "";
+      const r = await api("/api/exam/create", { course: c.folder, title: title.value, modules: [...picked], exam_date: date.value, format: format.value, scope_note: note.value });
+      create.disabled = false;
+      if (!r.ok) { error.textContent = r.message || "Couldn't create this review."; return; }
+      close(); openExamPlan(c, r.plan.id);
+    } }, "Create exam workspace");
+    async function load() {
+      const r = await api("/api/exams?" + new URLSearchParams({ course: c.folder }));
+      if (!r.ok) { body.replaceChildren(el("p", { class: "err" }, r.message || "Couldn't load reviews.")); return; }
+      body.replaceChildren(...(r.plans || []).map(p => el("button", { class: "choice", style: "width:100%;text-align:left;margin-bottom:8px", onclick: () => { close(); openExamPlan(c, p.id); } },
+        el("div", null, el("strong", null, p.title), el("div", { class: "muted small" }, p.exam_date || "No exam date set")))));
+    }
+    load();
+    return [el("p", { class: "muted" }, "Practice in the app, revisit mistakes, and follow a review schedule based on your attempts. Questions come from your connected AI and include source references."), body,
+      el("h3", null, "New exam workspace"),
+      el("div", { class: "field" }, el("label", null, "Exam name"), title),
+      el("div", { class: "field" }, el("label", null, "Date (optional)"), date),
+      el("div", { class: "field" }, el("label", null, "Format and permitted tools"), format),
+      el("div", { class: "field" }, el("label", null, "Scope and focus"), note), modules,
+      el("p", { class: "help" }, "Choose modules, or leave all unticked for the whole course. Other course references are included too: check the source list before generating practice. Your selection is a study scope, not confirmed exam coverage."),
+      error, el("div", { class: "sheet-foot" }, create)];
+  }, { wide: true });
+}
+
+function openExamPlan(c, id) {
+  sheet("Exam workspace", close => {
+    const body = el("div", null, el("p", { class: "muted" }, "Loading practice…"));
+    let p;
+    async function load() {
+      const r = await api("/api/exam?" + new URLSearchParams({ id }));
+      if (!r.ok) { body.replaceChildren(el("p", { class: "err" }, r.message || "Couldn't load this exam.")); return; }
+      p = r.plan; draw();
+    }
+    function draw() {
+      const metrics = p.metrics || {};
+      const coverage = p.coverage || {};
+      const warnings = p.scope_warnings || [];
+      const questions = p.questions || [];
+      const details = el("details", null, el("summary", null, "Sources selected for this review (" + (p.inventory || []).length + ")"),
+        el("ul", { class: "list" }, (p.inventory || []).map(s => el("li", null, el("button", { class: "btn quiet small", onclick: () => openItem(s.path) }, s.title || s.path),
+          s.missing ? el("span", { class: "err small" }, "Unavailable: " + s.missing) : null))));
+      const queue = p.review_queue || [];
+      const order = queue.map(q => typeof q === "string" ? q : (q.question_id || q.id));
+      const sorted = [...questions].sort((a, b) => {
+        const ia = order.indexOf(a.id), ib = order.indexOf(b.id);
+        return (ia < 0 ? 999 : ia) - (ib < 0 ? 999 : ib);
+      });
+      body.replaceChildren(el("div", null, el("h3", null, p.title),
+        el("p", { class: "small" }, [p.exam_date && "Exam: " + p.exam_date, p.format].filter(Boolean).join(" · ")),
+        el("p", { class: "muted small" }, p.scope_note_label || "Study scope selected by you. Check it against your instructor's exam instructions."),
+        p.scope_note ? el("p", { class: "small" }, p.scope_note) : null,
+        ...warnings.map(w => el("p", { class: "aside small" }, typeof w === "string" ? w : JSON.stringify(w))),
+        el("div", { class: "row" }, el("button", { class: "btn primary", onclick: () => copyText(examRequest(p)) }, questions.length ? "Copy request for more practice" : "Copy preparation request"),
+          el("button", { class: "btn", onclick: load }, "Refresh questions")),
+        el("p", { class: "help" }, "Paste the request into your connected ChatGPT or Claude, then refresh here."),
+        details,
+        el("p", { class: "small" }, "Practice references " + (coverage.cited_sources || 0) + " of " + (coverage.available_sources || 0) + " available sources."),
+        (coverage.uncited_source_paths || []).length ? el("p", { class: "aside small" }, plural(coverage.uncited_source_paths.length, "source") + " still has no current practice question. Ask your AI to fill those gaps.") : null,
+        el("h3", null, "Practice and review"),
+        el("p", { class: "muted small" }, "Quizzes use an AI answer key. Written answers are self-assessed."),
+        el("div", { class: "small", style: "margin-bottom:16px" }, metricText(metrics)),
+        metrics.stale_attempts_excluded ? el("p", { class: "help" }, plural(metrics.stale_attempts_excluded, "past attempt") + " excluded from current results because their questions' sources changed.") : null,
+        el("details", { style: "margin-bottom:16px" }, el("summary", { class: "small muted" }, "How source checks and results work"),
+          el("p", { class: "help" }, "Practice is AI-generated. Checked quotations confirm the source text exists; check explanations against the sources. Source references do not prove complete topic coverage. Quiz accuracy counts first attempts before viewing the answer. Self-assessment and quiz results are not proof of mastery or a prediction of your exam grade.")),
+        sorted.length ? el("div", { class: "choices" }, sorted.map(q => el("div", { class: "choice", style: "display:block" },
+          el("div", { class: "row" }, el("strong", null, q.topic || "Practice"), el("span", { class: "spacer" }),
+            el("button", { class: "btn small", disabled: q.status === "stale", onclick: () => openPractice(id, q, load) }, q.status === "stale" ? "Regenerate from current sources" : "Practice")),
+          el("p", { class: "muted small", style: "margin:6px 0" }, q.prompt),
+          el("div", { class: "small muted" }, (q.difficulty || "") + " · " + (q.type === "mcq" ? "Quiz" : "Self-assessed answer") + " · " + plural(q.attempt_count || 0, "attempt")),
+          q.status === "stale" ? el("p", { class: "err small" }, "Source changed or unavailable. Ask your AI to regenerate this question.") : null,
+          q.next_review_at ? el("div", { class: "help" }, "Review: " + new Date(q.next_review_at).toLocaleString()) : null,
+          (() => { const row = queue.find(r => r.question_id === q.id); return row ? el("span", { class: "pill off" }, row.reason) : null; })())))
+          : el("div", { class: "aside" }, "No questions yet. Ask your connected AI to create practice from the selected sources using the preparation request above."),
+        el("div", { class: "sheet-foot" }, el("button", { class: "btn", onclick: () => { close(); openExams(c); } }, "All exam workspaces"))));
+    }
+    load(); return [body];
+  }, { wide: true });
+}
+
+function metricText(m) {
+  const total = m.first_attempt_mcq_count || 0;
+  const accuracy = m.first_attempt_mcq_accuracy;
+  const ratings = m.self_reported_ratings || {};
+  return "First-attempt quizzes: " + (total && accuracy !== null ? Math.round(100 * accuracy) + "% across " + plural(total, "question") : "no attempts yet") +
+    ". Written answers (self-assessed): " + (ratings.again || 0) + " need another try, " + (ratings.hard || 0) + " partial, " + (ratings.good || 0) + " could explain.";
+}
+
+function openPractice(planId, q, onSaved) {
+  sheet(q.topic || "Practice", close => {
+    const error = el("p", { class: "err", role: "alert" });
+    const feedback = el("div", { "aria-live": "polite" });
+    const options = el("div", { class: "choices" });
+    const answer = el("textarea", { rows: "5", "aria-label": "Your answer", placeholder: "Try the problem before viewing the explanation." });
+    let choice = -1, busy = false;
+    (q.choices || []).forEach((text, i) => {
+      const radio = el("input", { type: "radio", name: "answer-" + q.id, value: i });
+      radio.onchange = () => { choice = i; };
+      options.append(el("label", { class: "choice" }, radio, el("span", null, text)));
+    });
+    const submit = el("button", { class: "btn primary", onclick: tryAnswer }, q.type === "mcq" ? "Check answer" : "Compare with worked answer");
+    async function tryAnswer() {
+      if (busy) return;
+      if (q.type === "mcq" && choice < 0) { error.textContent = "Choose an answer first."; return; }
+      if (q.type !== "mcq" && !answer.value.trim()) { error.textContent = "Write your attempt first."; return; }
+      busy = true; submit.disabled = true; error.textContent = "";
+      let attempt;
+      if (q.type === "mcq") {
+        attempt = await api("/api/exam/attempt", { plan_id: planId, question_id: q.id, choice_index: choice });
+        if (!attempt.ok) { error.textContent = attempt.message; busy = false; submit.disabled = false; return; }
+      }
+      const r = await api("/api/exam/reveal", { plan_id: planId, question_id: q.id });
+      busy = false;
+      if (!r.ok) { error.textContent = r.message; submit.disabled = false; return; }
+      const review = r.question || r;
+      answer.disabled = true; options.querySelectorAll("input").forEach(i => { i.disabled = true; });
+      const result = attempt && (attempt.attempt || attempt);
+      feedback.replaceChildren(el("div", null,
+        result ? el("p", { class: result.correct ? "good" : "err" }, result.correct ? "Correct on this attempt." : "Review the reasoning and try a related problem.") : null,
+        el("h3", null, "Worked answer"), el("div", { class: "aside small", style: "white-space:pre-wrap" }, review.answer || review.expected_answer || ""),
+        el("p", { class: "small", style: "white-space:pre-wrap" }, review.explanation || ""),
+        el("p", { class: "help" }, "AI-generated answer. Supporting source quotations were checked; reasoning still needs review."),
+        ...(review.citations || []).map(s => el("div", { class: "aside small" }, el("button", { class: "btn quiet small", onclick: () => openItem(s.path) }, (s.locator || "Source") + " · " + s.path.split("/").pop()),
+          el("p", { style: "margin:4px 0;white-space:pre-wrap" }, s.quote))),
+        q.type === "mcq" ? null : el("div", null, el("p", { class: "small" }, "After comparing, how did your answer go? This is your self-assessment."),
+          el("div", { class: "row" }, [["again", "Need another try"], ["hard", "Got part of it"], ["good", "Could explain it"]].map(([rating, label]) => el("button", { class: "btn", onclick: async e => {
+            feedback.querySelectorAll("button").forEach(b => { b.disabled = true; });
+            const saved = await api("/api/exam/attempt", { plan_id: planId, question_id: q.id, answer: answer.value, self_rating: rating });
+            if (!saved.ok) { error.textContent = saved.message; feedback.querySelectorAll("button").forEach(b => { b.disabled = false; }); return; }
+            error.textContent = ""; toast("Self-assessment saved. Review schedule updated."); onSaved(); close();
+          } }, label))))));
+      submit.hidden = true;
+      if (q.type === "mcq") onSaved();
+    }
+    return [el("p", { style: "white-space:pre-wrap" }, q.prompt), q.type === "mcq" ? options : answer, error, submit, feedback,
+      el("div", { class: "sheet-foot" }, el("button", { class: "btn", onclick: close }, "Close"))];
   }, { wide: true });
 }
 

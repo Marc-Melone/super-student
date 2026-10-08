@@ -2,8 +2,8 @@
 
 A person who studied well has notes on everything; answering "review everything for the midterm" from search
 hits alone can miss slides. So the AI works through the course (read every page, look at every picture, save
-notes that cite each slide or page), and Super Student keeps track: what's been studied, which slides or pages
-the notes skipped, and which documents changed since. Module and course notes tie it together.
+notes that cite each slide or page), and Super Student tracks saved reference coverage and changed sources.
+Mentioning a page number does not verify reading, understanding, or learning. Module and course notes tie it together.
 
 Notes live in <course>/Study Notes/ (searchable like everything else); the record is
 <library>/.superstudent/notes.json.
@@ -154,11 +154,11 @@ def doc_status(store: Dict[str, Any], doc: Doc, copies: Optional[Dict[str, str]]
     entry = store.get(doc.rel)
     if not entry:
         twin = (copies if copies is not None else _studied_copies(store)).get(_doc_fp(doc))
-        return f"same content as {twin}, already studied" if twin and twin != doc.rel else "not studied"
+        return f"same content as {twin}, notes already saved" if twin and twin != doc.rel else "no current notes"
     if not entry.get("fp") or entry["fp"] != _doc_fp(doc):
-        return "changed since studied"
+        return "changed since notes saved"
     if entry.get("missed"):
-        return "skips " + _compact(entry["missed"])
+        return "missing references: " + _compact(entry["missed"])
     return "done"
 
 
@@ -167,7 +167,7 @@ def _summary_status(store: Dict[str, Any], key: str, docs: List[Doc]) -> str:
     if not entry:
         return "not yet"
     if entry.get("sources") != _sources(docs):
-        return "changed since studied"
+        return "changed since notes saved"
     newest = max((store.get(d.rel, {}).get("date", "") for d in docs), default="")
     if newest > entry.get("date", "") or len(docs) > int(entry.get("docs") or 0):
         return "older than some document notes"
@@ -203,7 +203,7 @@ def progress(lib, course: str = "", limit: int = 8) -> Dict[str, Any]:
         courses.append({
             "folder": course_key, "label": label, "docs": len(docs),
             "done": sum(1 for s in status.values() if s == "done"),
-            "partial": sum(1 for s in status.values() if s.startswith("skips")),
+            "partial": sum(1 for s in status.values() if s.startswith("missing references")),
             "changed": sum(1 for s in status.values() if s.startswith("changed")),
             "todo": todo[:limit], "todo_total": len(todo), "modules": module_rows,
             "course_notes": course_status,
@@ -227,10 +227,10 @@ def status_fn(lib):
             return "source unavailable"
         if not entry:
             twin = copies.get(fingerprint(sidecar, lib)) if sidecar.exists() else None
-            return f"see notes for {twin} (same content)" if twin and twin != rel else "not studied"
+            return f"see notes for {twin} (same content)" if twin and twin != rel else "no current notes"
         if not sidecar.exists() or not entry.get("fp") or entry["fp"] != fingerprint(sidecar, lib):
-            return "changed since studied"
-        return "skips " + _compact(entry["missed"]) if entry.get("missed") else "studied"
+            return "changed since notes saved"
+        return "missing references: " + _compact(entry["missed"]) if entry.get("missed") else "current referenced notes"
     return status
 
 
@@ -304,7 +304,7 @@ def _save(lib, path: str, notes: str, by: str = "") -> Dict[str, Any]:
         if doc.missing:
             return {"ok": False, "message": "This source is unavailable or stale. Update it before saving current study notes."}
         if len(text) < MIN_DOC:
-            return {"ok": False, "message": "These notes are too short to stand in for having studied the document."}
+            return {"ok": False, "message": "These notes are too short to be useful for reviewing this document."}
         missed = missed_units(doc, text)
         key = doc.rel
         rel_in_course = Path(doc.rel).relative_to(cdir.relative_to(lib.root.resolve())).as_posix()
@@ -332,6 +332,7 @@ def _save(lib, path: str, notes: str, by: str = "") -> Dict[str, Any]:
     except Exception:
         pass
     message = f"Saved {kind} notes to {entry['file']}."
+    message += " Page/slide mentions are a reference check, not proof of reading, understanding or mastery."
     if unavailable:
         message += " This summary is incomplete because some sources are unavailable or stale."
     if missed:
