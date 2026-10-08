@@ -79,8 +79,9 @@ study them like someone who studied every slide: everything is converted to text
   LibreOffice again in this chat. Native Apple Vision and native Mac windows remain unverified here.
 - 1.6.1 packages the credential-origin, library-boundary, stale-source and source-fingerprint fixes merged
   in PR #1. Visual descriptions and study notes without the new hashes are treated as outdated.
-- Personal use only while institutional OAuth and Canvas integration approval remain unresolved. Do not
-  onboard other users through personal access tokens. The website stays "Coming soon".
+- Institutional OAuth and Canvas integration approval remain unresolved. The earlier advice was personal use
+  only, with no onboarding of other users through personal access tokens. On 8 Oct 2026 Marc chose to offer
+  the download publicly on the website anyway.
 - The Mac app now declares macOS 13+ to match the pinned installer's supported platform policy. Both chip
   architectures have dependency constraints; Intel execution and older macOS have not been tested here.
 - The native Vision adapter uses optional `None` options to avoid a reproduced PyObjC dictionary bridge
@@ -96,12 +97,14 @@ study them like someone who studied every slide: everything is converted to text
 - Repo: github.com/Marc-Melone/super-student, currently **public**. Marc is considering making it private and
   sharing only with friends (collaborators, or sending them the zip directly). Nobody had forked or starred it.
 - Website: `docs/` is a plain-language landing page for GitHub Pages (`docs/index.html`, one self-contained file,
-  Atkinson Hyperlegible + Source Serif 4, colors from the app icon). It currently shows **"Coming soon"** instead
-  of download buttons and has no GitHub link. Pages is **not turned on yet**; Marc does that himself in
-  Settings, Pages, Deploy from a branch, `main` + `/docs` (free accounts need a public repo for Pages; GitHub Pro
-  allows Pages from a private repo, but the site itself is still public). To launch, put the download buttons back
-  (link: `https://github.com/Marc-Melone/super-student/raw/main/releases/SuperStudent-<version>-mac.zip`) and update
-  the version number on every release. The README links to `https://marc-melone.github.io/super-student/`.
+  Atkinson Hyperlegible + Source Serif 4, colors from the app icon). Since 8 Oct 2026 it offers the download
+  again (top bar, hero, step 1 and closing buttons) and still has no GitHub link. Pages is on and redeploys on
+  every push to `main` ("pages build and deployment" runs); sessions can't open github.io or the Pages API
+  through the proxy. On every release, update the four download links
+  (`https://github.com/Marc-Melone/super-student/raw/main/releases/SuperStudent-<version>-mac.zip`) and the
+  version in the hero fine print. Those raw links only work while the repo is public: making it private breaks
+  the downloads (and Pages from a private repo needs GitHub Pro). The README links to
+  `https://marc-melone.github.io/super-student/`.
 - Not yet verified:
   1. Test the native Mac window and Finder/Gatekeeper flow outside the sandbox. The local server, fresh
      runtime install and upgrade passed on Apple Silicon under Bash 3.2. Still check:

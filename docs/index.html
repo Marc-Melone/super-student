@@ -65,7 +65,6 @@
     font: 700 1.05rem var(--sans); padding: 14px 24px; border-radius: 10px;
   }
   .button:hover { background: var(--blue-dark); }
-  .button.soon, .button.soon:hover { background: var(--line); color: var(--ink-soft); cursor: default; }
   .button svg { width: 20px; height: 20px; flex: none; }
   .top .button { padding: 10px 18px; font-size: 0.95rem; }
 
@@ -220,7 +219,7 @@
       <a href="#how">How it works</a>
       <a href="#start">Get started</a>
       <a href="#faq">Questions</a>
-      <span class="button soon">Coming soon</span>
+      <a class="button" href="https://github.com/Marc-Melone/super-student/raw/main/releases/SuperStudent-1.7.1-mac.zip">Download</a>
     </nav>
   </header>
 
@@ -231,9 +230,11 @@
       <p class="lede">Super Student copies your Canvas courses onto your Mac and connects them to Claude or ChatGPT.
         Ask about a lecture, a reading or the midterm, and the answer comes from your actual course materials,
         with the exact slide, page or minute it came from.</p>
-      <span class="button soon" aria-disabled="true">Coming soon for Mac</span>
-      <p class="fine">Super Student is being tested with a small group right now. It will be free, for macOS 13 or newer
-        on any Mac, and work with the Claude and ChatGPT desktop apps.</p>
+      <a class="button" href="https://github.com/Marc-Melone/super-student/raw/main/releases/SuperStudent-1.7.1-mac.zip">
+        <svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M10 3v10m0 0l-4-4m4 4l4-4M4 16h12" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        Download for Mac
+      </a>
+      <p class="fine">Free. Version 1.7.1, for macOS 13 or newer on any Mac. Works with the Claude and ChatGPT desktop apps.</p>
     </div>
 
     <div class="demo" aria-label="Example: asking your AI about a course">
@@ -315,7 +316,7 @@
 <section class="band" id="start">
   <div class="wrap">
     <div class="intro">
-      <h2>Getting started will take about 15 minutes</h2>
+      <h2>Get started in about 15 minutes</h2>
       <p>No Terminal and no technical setup. You'll need a Mac, the Claude or ChatGPT desktop app, and your
         Canvas login.</p>
     </div>
@@ -323,7 +324,7 @@
       <li>
         <div>
           <h3>Download and unzip</h3>
-          <p>Download Super Student once it's available.
+          <p><a href="https://github.com/Marc-Melone/super-student/raw/main/releases/SuperStudent-1.7.1-mac.zip">Download Super Student</a>.
             Double-click the downloaded file to unzip it if your Mac didn't already, then drag <b>Super Student</b> into your Applications folder.</p>
         </div>
       </li>
@@ -447,7 +448,7 @@
     </details>
     <details>
       <summary>How do I update to a new version?</summary>
-      <div><p>Download the new version, drag it into Applications to replace the old one, and open it.
+      <div><p>Download the new version from this page, drag it into Applications to replace the old one, and open it.
         It updates itself, then reminds you to quit and reopen Claude or ChatGPT.</p></div>
     </details>
     <details>
@@ -462,9 +463,12 @@
   <div class="wrap closing">
     <div>
       <h2>Study with everything in front of you</h2>
-      <p>Coming soon. Free, for macOS 13 or newer.</p>
+      <p>Free, for macOS 13 or newer.</p>
     </div>
-    <span class="button soon" aria-disabled="true">Coming soon for Mac</span>
+    <a class="button" href="https://github.com/Marc-Melone/super-student/raw/main/releases/SuperStudent-1.7.1-mac.zip">
+      <svg viewBox="0 0 20 20" fill="none" aria-hidden="true"><path d="M10 3v10m0 0l-4-4m4 4l4-4M4 16h12" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      Download for Mac
+    </a>
   </div>
 </section>
 
@@ -472,7 +476,6 @@
   <div class="wrap">
     <p>Made by Marc Melone. Super Student is an independent project, not made by or affiliated with Instructure
       (the makers of Canvas), Anthropic, OpenAI or any school.</p>
-    
   </div>
 </footer>
 
