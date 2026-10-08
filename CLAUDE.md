@@ -29,9 +29,9 @@ study them like someone who studied every slide: everything is converted to text
     questions removed (`remove_questions`, connector tool `remove_exam_questions`).
   - Multiple-choice keys are checked: a question is rejected when its answer names or plainly reads like a
     different choice than `correct_index`.
-  - The 1.7.0 slowdown is fixed: it re-read and re-hashed every source on every check (realistic test
-    library: opening the app ~36 s, checking one quiz answer ~8 s, study progress ~5.6 s; now ~1.2 s,
-    ~0.2 s and ~0.1 s, about 1.6.0 speeds). Files are recognized by `util.stat_signature` (device, file id,
+  - The 1.7.0 slowdown is fixed: it re-read and re-hashed every source on every check (test library of
+    10 courses, ~2,200 files: opening the app ~36 s, checking one quiz answer ~8 s, study progress
+    ~5.6 s; now ~1.1 s, ~0.2 s and ~0.07 s, about 1.6.0 speeds). Files are recognized by `util.stat_signature` (device, file id,
     size, mtime_ns, ctime_ns). Results are reused between actions only if the file had settled (unchanged
     for `SETTLE_NS` = 3 s) when the read began and its disk keeps real change times
     (`util.change_times_tracked`, probed once per folder; FAT/exFAT on a Mac and Windows are never trusted,
