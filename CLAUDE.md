@@ -56,6 +56,14 @@ study them like someone who studied every slide: everything is converted to text
     record) is retried (`evidence.READ_RETRIES`) instead of marking practice stale. `carry_over.py`
     (run by sync after media) keeps pre-1.6.1 study notes and descriptions and binds pre-1.7.0 transcripts
     when the source provably hasn't changed (rules in its docstring).
+- Second review of the 1.7.1 fixes (12 Oct 2026, not released yet): search reads hits and the index's record of
+  their documents in one read transaction, so an index saved mid-search can't make an old hit (an outdated
+  picture description) look current; a hit whose outdated description is left out is retried with the
+  some-words search. `carry_over.py` carries nothing over unless `util.change_times_tracked` confirms the
+  disk keeps real change times (exFAT on a Mac doesn't). Exam questions citing a source that sync moved into
+  an unselected module get status `out_of_scope`: out of practice, the review queue and results. Quotes need
+  at least one two-character word after formatting is dropped ("**" was accepted). "The answer is a higher
+  bond price" (lowercase "a" plus more words) is no longer read as option A.
 - 1.7.0 adds a course/module exam workspace, connector-generated source-cited practice, in-app multiple
   choice and self-assessed written answers, saved attempts, spaced review priorities, and source-reference
   coverage. Scope remains student-selected and unconfirmed. Changed/unavailable sources disable affected
@@ -216,12 +224,12 @@ python tests/test_study.py          # 59
 python tests/test_gui.py            # 67 (app server; SUPERSTUDENT_APP_DRYRUN)
 python tests/test_openai.py         # 18 (needs the Codex CLI on PATH for the live part)
 python tests/test_high_priority.py  # 35 security and source-freshness regressions
-python tests/test_exam_retrieval.py # 69 retrieval, source-evidence and search-during-sync checks
-python tests/test_exams.py          # 56 exam state, scoring, scope, freshness, storage and answer-key checks
+python tests/test_exam_retrieval.py # 72 retrieval, source-evidence and search-during-sync checks
+python tests/test_exams.py          # 58 exam state, scoring, scope, freshness, storage and answer-key checks
 python tests/test_exam_workflow.py  # 4 real HTTP/MCP workflow tests, each with multiple assertions
 python tests/test_extraction_evidence.py # 24 extraction binding, ZIP, recording refresh and moved-file regressions
 python tests/test_freshness_cache.py # 25 the faster freshness checks: just as strict, unchanged files read once
-python tests/test_carry_over.py     # 13 study notes, descriptions and transcripts kept from older versions
+python tests/test_carry_over.py     # 14 study notes, descriptions and transcripts kept from older versions
 python benchmarks/exam_retrieval.py --require-improvement
 python tests/gui_demo.py            # click through the app against the fake Canvas (token: test-token-123-padding-to-look-real)
 python mac/build_app.py             # dist/Super Student.app and dist/SuperStudent-<version>-mac.zip

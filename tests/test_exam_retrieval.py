@@ -146,6 +146,14 @@ class EvidenceTests(CourseFixture):
     def test_fabricated_quote_rejected(self):
         self.assertEqual(self.validate(quote="Duration makes every investment risk free.")["errors"][0]["code"], "quote_mismatch")
 
+    def test_quote_without_words_rejected(self):
+        for quote in ("**", "** **", "`", "[](x)", ".", "a"):
+            with self.subTest(quote=quote):
+                result = self.validate(quote=quote)
+                self.assertFalse(result["valid"], result)
+                self.assertEqual(result["errors"][0]["code"], "invalid_citation")
+        self.assertTrue(self.validate(quote="duration")["valid"])
+
     def test_quote_from_other_section_rejected(self):
         self.assertFalse(self.validate(locator="Page 2")["valid"])
 
@@ -725,6 +733,38 @@ class SearchDuringUpdatesTests(CourseFixture):
         Image.new("RGB", (8, 8), "black").save(original)       # same size on disk is not required here
         self.assertEqual(search(self.lib, "purple anatomy"), [])
         self.assertTrue(search(self.lib, "axis labels"))
+
+    def test_index_saved_during_a_search_cannot_make_an_old_description_look_current(self):
+        from superstudent import describe, index
+        from PIL import Image
+        original = self.picture()
+        self.assertTrue(describe.save(self.lib, original.relative_to(self.lib.root).as_posix(), "Image",
+                                      "An obsolete chart of purple anatomy labels.")["ok"])
+        update_index(self.lib)
+        Image.new("RGB", (8, 8), "black").save(original)       # the description no longer matches the picture
+        built = index._IndexEntries.__init__
+
+        def sync_saves_the_index_meanwhile(entries, conn):
+            update_index(self.lib)                              # another process brings the index up to date
+            built(entries, conn)
+
+        with patch.object(index._IndexEntries, "__init__", sync_saves_the_index_meanwhile):
+            self.assertEqual(search(self.lib, "purple anatomy"), [])
+        self.assertEqual(search(self.lib, "purple anatomy"), [])
+
+    def test_outdated_description_left_out_still_finds_the_other_words(self):
+        from superstudent import describe
+        from PIL import Image
+        original = self.picture()
+        self.assertTrue(describe.save(self.lib, original.relative_to(self.lib.root).as_posix(), "Image",
+                                      "An obsolete chart of purple anatomy labels.")["ok"])
+        update_index(self.lib)
+        self.assertEqual(search(self.lib, "axis purple")[0]["match"], "all words")
+        Image.new("RGB", (8, 8), "black").save(original)
+        hits = search(self.lib, "axis purple")
+        self.assertEqual(len(hits), 1)
+        self.assertEqual(hits[0]["match"], "some words")
+        self.assertNotIn("purple", hits[0]["snippet"])
 
 
 if __name__ == "__main__":

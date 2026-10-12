@@ -360,6 +360,11 @@ def search(lib, query: str, course: str = "", kind: str = "", limit: int = 10, p
     conn = _reader(lib)
     if conn is None:
         return []
+    # One read transaction for the whole search: the hits and what the index recorded about their documents
+    # (used to judge whether a hit is current) must come from the same saved version of the index. Without it,
+    # a sync saving the index mid-search could pair an old hit (say, with an outdated picture description) with
+    # the new record of its document, which matches the files, and the old hit would pass as current.
+    conn.execute("BEGIN")
     descriptions = describe.load_view(lib)
     current_text = _CurrentText(lib, markers)
     state = lib.state_view()
@@ -392,7 +397,7 @@ def search(lib, query: str, course: str = "", kind: str = "", limit: int = 10, p
             if len(fts) > 1:
                 strategies.append((" OR ".join(fts), False))
             query_seen = set()
-            for match, complete in strategies:
+            for at, (match, complete) in enumerate(strategies):
                 try:
                     rows = conn.execute(sql, [markers[0], markers[1], match] + params + [candidate_limit]).fetchall()
                 except sqlite3.OperationalError:
@@ -414,7 +419,10 @@ def search(lib, query: str, course: str = "", kind: str = "", limit: int = 10, p
                                    score=round(-score, 3))
                     hit["retrieval_score"] += (1.0 if complete else 0.35) / (60 + rank)
                     hit["matched_queries"].append(phrasing)
-                    hit["_matches"].add((match, complete))
+                    # A section that matched all the words also matched some of them: if its document changed
+                    # since indexing (an outdated picture description left out, say), the current text is
+                    # checked with every strategy from this one on, so a partial match isn't lost.
+                    hit["_matches"].update(strategies[at:])
         # What's currently in the course comes first; copies of things removed from Canvas come after, labeled.
         ranked = sorted(candidates.values(), key=lambda r: (r["removed"], r["match"] != "all words",
                                                            -r["retrieval_score"]))
