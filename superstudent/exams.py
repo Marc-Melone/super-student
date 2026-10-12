@@ -414,9 +414,27 @@ def _question_status(lib, plan, question, source_cache=None):
     return "current", []
 
 
+def _scope_status(question, scope):
+    """Whether every source a question cites is still in the workspace's scope. A source that sync moved into a
+    module that isn't selected (the instructor reorganized the course) takes its questions out of practice and
+    their attempts out of the results, as a changed source does. Without a scope (the course is unavailable),
+    the source checks decide."""
+    if scope is None:
+        return "current", []
+    paths = {r["path"] for r in scope["inventory"]}
+    outside = [c["path"] for c in question["citations"] if c["path"] not in paths]
+    if not outside:
+        return "current", []
+    return "out_of_scope", [f"A cited source is no longer in this workspace's selected modules: {outside[0]}. "
+                            "Remove this question; practice on that module belongs in a workspace that selects it."]
+
+
 def _require_current_question(public_plan, question_id):
     """Honor the final source check before committing a change or returning an answer."""
     question = _question(public_plan, question_id)
+    if question.get("status") == "out_of_scope":
+        raise ExamError("This question is outside the workspace's selected modules now: "
+                        + "; ".join(question.get("status_errors") or []))
     if question.get("status") != "current":
         errors = question.get("status_errors") or ["The cited source is unavailable or changed."]
         raise ExamError("This question's source changed during the update. Regenerate it before continuing: "
@@ -586,10 +604,17 @@ def _coverage(plan, inventory):
 def _public(lib, stored, include_answers, source_cache=None, scope=None):
     plan = copy.deepcopy(stored)
     source_cache = {} if source_cache is None else source_cache
+    if scope is None:
+        try:
+            scope = _current_scope(lib, plan, source_cache)
+        except (ExamError, LibraryPathError, OSError):
+            scope = None                 # reported by _scope_changes below
     now = _iso(_now())
     queue = []
     for question in plan["questions"]:
         status, errors = _question_status(lib, plan, question, source_cache)
+        if status == "current":
+            status, errors = _scope_status(question, scope)
         question["status"], question["status_errors"] = status, errors
         attempts = [a for a in plan["attempts"] if a["question_id"] == question["id"]]
         latest = attempts[-1] if attempts else None
@@ -783,7 +808,12 @@ def _mcq_key_problem(choices: List[str], correct: int, answer: str) -> Optional[
         letter = next((g for g in label.groups() if g), "").upper()
         index = ord(letter) - ord("A") if letter else -1
         if 0 <= index < len(choices):
-            return None if index == correct else f"the answer starts with option {letter}, which is choice {index}"
+            # "The answer is a higher bond price": a lowercase "a" followed by more words is the article, not
+            # option A, so what the answer says decides. "The answer is A because ..." and "(a)" are labels.
+            article = (label.group(1) == "a" and stated[label.start(1) - 1] != "("
+                       and re.match(r"\s+\w", stated[label.end(1):]))
+            if not article:
+                return None if index == correct else f"the answer starts with option {letter}, which is choice {index}"
     text = _key_text(answer)
     keys = [_key_text(c) for c in choices]
     named = {i for i, key in enumerate(keys) if key and re.search(r"(?<!\w)" + re.escape(key) + r"(?!\w)", text)}
@@ -896,6 +926,10 @@ def reveal_question(lib, plan_id, question_id):
         status, errors = _question_status(lib, plan, question, source_cache)
         if status != "current":
             raise ExamError("This question needs regeneration: " + "; ".join(errors))
+        scope = _scope_for_write(lib, plan, source_cache)
+        status, errors = _scope_status(question, scope)
+        if status != "current":
+            raise ExamError("This question is outside the workspace's selected modules now: " + "; ".join(errors))
         # Viewing the worked answer after checking a quiz answer reviews that attempt; viewing it before answering
         # (always the case for a written answer, which is compared with it) makes the next attempt assisted.
         latest = next((a for a in reversed(plan["attempts"]) if a["question_id"] == question["id"]), None)
@@ -906,7 +940,7 @@ def reveal_question(lib, plan_id, question_id):
         question["revealed"] = True
         question["revealed_at"] = _iso(_now())
         plan["updated_at"] = question["revealed_at"]
-        public = _public(lib, plan, False, source_cache, scope=_scope_for_write(lib, plan, source_cache))
+        public = _public(lib, plan, False, source_cache, scope=scope)
         current = _require_current_question(public, question_id)
         revealed = copy.deepcopy(question)
         revealed.pop("dedup_key", None)
@@ -926,6 +960,10 @@ def record_attempt(lib, plan_id, question_id, answer="", choice_index=-1, self_r
         status, errors = _question_status(lib, plan, question, source_cache)
         if status != "current":
             raise ExamError("This question needs regeneration before it can be scored: " + "; ".join(errors))
+        scope = _scope_for_write(lib, plan, source_cache)
+        status, errors = _scope_status(question, scope)
+        if status != "current":
+            raise ExamError("This question is outside the workspace's selected modules now: " + "; ".join(errors))
         if question["type"] == "mcq":
             if (not isinstance(choice_index, int) or isinstance(choice_index, bool)
                     or not 0 <= choice_index < len(question["choices"])):
@@ -966,7 +1004,7 @@ def record_attempt(lib, plan_id, question_id, answer="", choice_index=-1, self_r
             attempt["choice_index"] = choice_index
         plan["attempts"].append(attempt)
         plan["updated_at"] = attempt["at"]
-        public = _public(lib, plan, False, source_cache, scope=_scope_for_write(lib, plan, source_cache))
+        public = _public(lib, plan, False, source_cache, scope=scope)
         _require_current_question(public, question_id)
         _save_store(lib, store)
         return {"ok": True, "attempt": public["attempts"][-1], "plan": public,

@@ -533,6 +533,34 @@ class ExamTests(unittest.TestCase):
         self.assertFalse(public["scope_changed"], public["scope_warnings"])
         self.assertTrue(exams.record_attempt(self.lib, plan_id, qid, choice_index=0)["ok"])
 
+    def test_source_moved_into_an_unselected_module_leaves_practice_and_results(self):
+        plan_id, qid = self.saved(plan=self.plan(modules=[1]))
+        self.assertTrue(exams.record_attempt(self.lib, plan_id, qid, choice_index=0)["ok"])
+        moved = f"{self.folder}/Modules/02 - Risk/lesson.md"
+        self.source.rename(self.lib.root / moved)              # what sync does when the instructor moves it
+        exams.move(self.lib, self.path, moved)
+        public = exams.get_plan(self.lib, plan_id)["plan"]
+        question = public["questions"][0]
+        self.assertEqual(question["status"], "out_of_scope")
+        self.assertIn("no longer in this workspace's selected modules", question["status_errors"][0])
+        self.assertEqual(public["review_queue"], [])
+        self.assertEqual(public["metrics"]["first_attempt_mcq_count"], 0)
+        self.assertEqual(public["metrics"]["stale_attempts_excluded"], 1)
+        self.assertEqual(public["coverage"]["current_questions"], 0)
+        self.assertNotIn(moved, {r["path"] for r in public["inventory"]})
+        self.assertTrue(public["scope_changed"])
+        stored = (self.lib.meta / "exams.json").read_bytes()
+        for result in (exams.record_attempt(self.lib, plan_id, qid, choice_index=0),
+                       exams.reveal_question(self.lib, plan_id, qid)):
+            self.assertFalse(result["ok"])
+            self.assertIn("outside the workspace's selected modules", result["message"])
+        self.assertEqual((self.lib.meta / "exams.json").read_bytes(), stored)
+        whole = exams.create_plan(self.lib, self.folder, "Final")["plan"]       # the whole course still has it
+        q = self.question(citations=[{"path": moved, "locator": "Page 1",
+                                      "quote": "Discounting converts future cash flows to present value."}])
+        self.assertTrue(exams.save_questions(self.lib, whole["id"], [q])["ok"])
+        self.assertEqual(exams.get_plan(self.lib, whole["id"])["plan"]["questions"][0]["status"], "current")
+
     def test_picture_description_saved_later_keeps_practice_current(self):
         plan_id, qid = self.saved()
         self.source.write_text(self.source.read_text().replace(
@@ -606,6 +634,22 @@ class ExamTests(unittest.TestCase):
             with self.subTest(change=change):
                 result = exams.save_questions(self.lib, plan["id"], [self.question(prompt=f"Question {i}?", **change)])
                 self.assertTrue(result["ok"], result)
+
+    def test_answer_starting_with_the_article_a_is_not_read_as_option_a(self):
+        plan = self.plan()
+        bond = dict(prompt="What follows a fall in yields?", choices=["A lower bond price", "A higher bond price"],
+                    correct_index=1)
+        for i, answer in enumerate(("The answer is a higher bond price", "Answer: a higher bond price.",
+                                    "The correct answer is a higher bond price, because prices move against yields.")):
+            with self.subTest(answer=answer):
+                result = exams.save_questions(self.lib, plan["id"], [self.question(answer=answer, topic=f"Bonds {i}", **bond)])
+                self.assertTrue(result["ok"], result)
+        for answer in ("The answer is a lower bond price", "The answer is A because prices fall", "The answer is (a)",
+                       "The answer is a."):
+            with self.subTest(answer=answer):
+                result = exams.save_questions(self.lib, plan["id"], [self.question(answer=answer, **bond)])
+                self.assertFalse(result["ok"], result)
+                self.assertIn("Answer key mismatch", result["message"])
 
     def test_review_progress_shows_when_the_answer_is_viewed_after_checking(self):
         """The app shows the worked answer after every quiz check. 1.7.0 then left every later attempt out of

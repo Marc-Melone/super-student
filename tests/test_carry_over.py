@@ -11,6 +11,7 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest.mock import patch
 from datetime import date, datetime, timedelta
 from pathlib import Path
 
@@ -163,6 +164,20 @@ class CarryOverTests(unittest.TestCase):
         self.assertFalse(carry_over.bind_transcript(self.lib, video, transcript, dict(item, status="failed"), item["stamp"]))
         self.assertFalse(carry_over.bind_transcript(self.lib, video, transcript, dict(item, stale=True), item["stamp"]))
         self.assertNotIn("source_sha256", transcript.read_text())
+
+    def test_nothing_is_carried_over_from_a_disk_without_real_change_times(self):
+        """exFAT on a Mac reports the modification time as the change time, and copies or apps can set it
+        back, so it can't show a file is untouched."""
+        video, transcript, item = self.recording()
+        self.legacy_notes()
+        self.legacy_description(date.today() + timedelta(days=1))
+        with patch.object(carry_over, "change_times_tracked", return_value=False):
+            self.assertFalse(carry_over.bind_transcript(self.lib, video, transcript, item, item["stamp"]))
+            self.assertEqual(carry_over.study_notes(self.lib), 0)
+            self.assertEqual(carry_over.descriptions(self.lib), 0)
+        self.assertNotIn("source_sha256", transcript.read_text())
+        self.assertEqual(self.status(), "changed since notes saved")
+        self.assertEqual(describe.current(self.lib, self.rel, self.original), {})
 
     def test_sync_keeps_an_old_my_files_transcript(self):
         """The sync path: a 1.6 transcript of an untouched recording counts as up to date."""

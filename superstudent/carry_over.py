@@ -15,7 +15,10 @@ from what the older versions did record:
   been touched since the transcript was written. It is then fingerprinted and the transcript bound to it.
 
 "Touched" uses the file's change time, which every write, rename or permission change updates and which apps
-can't set back. Anything that doesn't meet these rules stays outdated, as before.
+can't set back. Some disks don't keep one (FAT and exFAT on a Mac report the modification time instead, which
+apps and copies set back, and Windows reports the creation time): nothing is carried over from a disk where
+util.change_times_tracked doesn't confirm real change times. Anything that doesn't meet these rules stays
+outdated, as before.
 """
 from __future__ import annotations
 
@@ -26,12 +29,16 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from .library import LibraryPathError
-from .util import atomic_write_json, atomic_write_text, file_digest, front_matter, parse_front_matter, relative_posix
+from .util import (atomic_write_json, atomic_write_text, change_times_tracked, file_digest, front_matter,
+                   parse_front_matter, relative_posix)
 
 _LEGACY_FP = re.compile(r"[0-9a-f]{16}")
 
 
 def _changed_at(path: Path) -> Optional[float]:
+    """When the file was last touched, or None when its disk doesn't keep a change time that proves it."""
+    if change_times_tracked(path.parent) is not True:
+        return None
     try:
         return path.stat().st_ctime
     except OSError:
@@ -153,6 +160,8 @@ def descriptions(lib) -> int:
             original = lib.checked(lib.root / rel)
             if not original.is_file():
                 continue
+            if _changed_at(original) is None:
+                continue
             st = original.stat()
             touched = date.fromtimestamp(st.st_ctime)
             digest = ""
@@ -207,6 +216,8 @@ def bind_transcript(lib, recording: Path, transcript: Path, item: Dict[str, Any]
         written = transcript.stat().st_mtime
         recorded = _local_time(item.get("last_successful_sync", "").replace("Z", "+00:00"))
         written = min(written, recorded) if recorded else written
+        if _changed_at(recording) is None:
+            return False
         before = recording.stat()
         if before.st_ctime >= written:
             return False
