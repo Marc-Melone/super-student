@@ -4,7 +4,7 @@ Super Student mirrors a student's Canvas courses into `~/SuperStudent` (the "lib
 study them like someone who studied every slide: everything is converted to text with citable locators
 (`## [Page 12]`, `## [Slide 7] Title`, `## [00:32:10]`), originals are kept for viewing as images, and a connector
 (MCP server) plus skills let the AI search, read, view pages and run a "study pass". It ships as a Mac app
-(non-technical students), a Terminal installer, and a CLI. Owner: Marc. Release version: 1.7.1.
+(non-technical students), a Terminal installer, and a CLI. Owner: Marc. Release version: 1.7.2.
 
 ## Working with Marc
 
@@ -14,7 +14,7 @@ study them like someone who studied every slide: everything is converted to text
 - Suggested effort: `high` for normal work on this codebase, `xhigh` for long unattended builds, `max` for
   independent reviews (especially anything touching the Canvas token).
 
-## Status (8 Oct 2026)
+## Status (12 Oct 2026)
 
 - 1.7.1 (8 Oct 2026) packages these fixes on top of 1.7.0 (PR #4). Its dependency pins are 1.7.0's, copied
   into the build unchanged, so only Super Student's own code changed; native Mac launch wasn't re-tested here:
@@ -56,7 +56,8 @@ study them like someone who studied every slide: everything is converted to text
     record) is retried (`evidence.READ_RETRIES`) instead of marking practice stale. `carry_over.py`
     (run by sync after media) keeps pre-1.6.1 study notes and descriptions and binds pre-1.7.0 transcripts
     when the source provably hasn't changed (rules in its docstring).
-- Second review of the 1.7.1 fixes (12 Oct 2026, not released yet): search reads hits and the index's record of
+- 1.7.2 (12 Oct 2026, PR #8) packages these fixes from a second review of 1.7.1, with 1.7.1's dependency pins
+  copied into the build unchanged; native Mac launch wasn't re-tested here: search reads hits and the index's record of
   their documents in one read transaction, so an index saved mid-search can't make an old hit (an outdated
   picture description) look current; a hit whose outdated description is left out is retried with the
   some-words search. `carry_over.py` carries nothing over unless `util.change_times_tracked` confirms the
