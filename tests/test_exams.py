@@ -651,6 +651,21 @@ class ExamTests(unittest.TestCase):
                 self.assertFalse(result["ok"], result)
                 self.assertIn("Answer key mismatch", result["message"])
 
+    def test_explicit_option_a_labels_are_checked_against_the_key(self):
+        plan = self.plan()
+        bond = dict(prompt="What follows a fall in yields?", choices=["A lower bond price", "A higher bond price"],
+                    correct_index=1)
+        for answer in ("Option a is correct", "option a", "Choice a is right.", "Answer a is correct",
+                       "The correct option is a because yields fell", "The answer is a because yields fell"):
+            with self.subTest(answer=answer):
+                result = exams.save_questions(self.lib, plan["id"], [self.question(answer=answer, **bond)])
+                self.assertFalse(result["ok"], result)
+                self.assertIn("starts with option A", result["message"])
+        for i, answer in enumerate(("Option b is correct", "Choice B: a higher bond price")):
+            with self.subTest(answer=answer):
+                result = exams.save_questions(self.lib, plan["id"], [self.question(answer=answer, topic=f"Keys {i}", **bond)])
+                self.assertTrue(result["ok"], result)
+
     def test_review_progress_shows_when_the_answer_is_viewed_after_checking(self):
         """The app shows the worked answer after every quiz check. 1.7.0 then left every later attempt out of
         accuracy, so a question missed once and answered right on three later days still read 0%."""

@@ -154,6 +154,17 @@ class EvidenceTests(CourseFixture):
                 self.assertEqual(result["errors"][0]["code"], "invalid_citation")
         self.assertTrue(self.validate(quote="duration")["valid"])
 
+    def test_formula_quotes_are_accepted_and_saved_ones_stay_valid(self):
+        path = self.write("Files/physics.md", "# Physics\n\n## [Page 1]\n\nNewton's second law: F = m a, so a = F / m."
+                                              "\n\n## [Page 2]\n\nMass-energy: E = mc\u00b2.")
+        citations = [{"path": path, "locator": "Page 1", "quote": "F = m a"},
+                     {"path": path, "locator": "Page 1", "quote": "a = F / m"},
+                     {"path": path, "locator": "Page 2", "quote": "E = mc\u00b2"}]
+        result = validate_evidence(self.lib, self.folder, citations)
+        self.assertTrue(result["valid"], result)
+        self.assertTrue(recheck_evidence(self.lib, self.folder, result["records"])["valid"])
+        self.assertFalse(validate_evidence(self.lib, self.folder, [dict(citations[0], quote="F")])["valid"])
+
     def test_quote_from_other_section_rejected(self):
         self.assertFalse(self.validate(locator="Page 2")["valid"])
 
@@ -765,6 +776,25 @@ class SearchDuringUpdatesTests(CourseFixture):
         self.assertEqual(len(hits), 1)
         self.assertEqual(hits[0]["match"], "some words")
         self.assertNotIn("purple", hits[0]["snippet"])
+
+    def test_a_result_matching_fewer_words_now_ranks_after_complete_matches(self):
+        from superstudent import describe
+        from PIL import Image
+        original = self.picture()
+        self.assertTrue(describe.save(self.lib, original.relative_to(self.lib.root).as_posix(), "Image",
+                                      "An obsolete chart of purple anatomy labels.")["ok"])
+        filler = " ".join(f"Background sentence {i} about unrelated course logistics." for i in range(40))
+        full = self.write("Files/notes.md", f"# Notes\n\n## Colors\n\n{filler} The axis is drawn in purple. {filler}")
+        update_index(self.lib)
+        before = search(self.lib, "axis purple")
+        self.assertEqual([h["match"] for h in before], ["all words", "all words"])
+        self.assertNotEqual(before[0]["path"], full)            # the short picture text ranked first
+        Image.new("RGB", (8, 8), "black").save(original)       # its description no longer applies
+        self.assertEqual([(h["path"], h["match"]) for h in search(self.lib, "axis purple", limit=1)],
+                         [(full, "all words")])
+        after = search(self.lib, "axis purple")
+        self.assertEqual([h["match"] for h in after], ["all words", "some words"])
+        self.assertEqual(after[0]["path"], full)
 
 
 if __name__ == "__main__":

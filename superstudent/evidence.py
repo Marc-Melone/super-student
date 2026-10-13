@@ -358,9 +358,11 @@ def _validate(lib, course_folder: str, citations: List[Dict[str, Any]], recheck:
             sections, names = source["sections"], source["names"]
             j = _section_index(source, locator)
             section = sections[j][1]
-            if not re.search(r"\w{2}", _normal(quote)):     # "**" or "." is in every section: it shows nothing
-                raise EvidenceError("invalid_citation", "Quote words from the source: the quoted passage has no "
-                                    "words or numbers once formatting is set aside.")
+            # "**", "." or "a" occurs in nearly every section, so it shows nothing. A formula such as "F = m a" has
+            # no two-letter word but is real evidence: count letters and digits anywhere in the quote.
+            if len(re.findall(r"[^\W_]", _normal(quote))) < 2:
+                raise EvidenceError("invalid_citation", "Quote words from the source: the quoted passage has fewer "
+                                    "than two letters or numbers once formatting is set aside.")
             if _normal(quote) not in _normal(section):
                 raise EvidenceError("quote_mismatch", "The quoted passage does not occur in that source section.")
             result["records"].append({"path": source["path"], "locator": names[j], "quote": quote.strip(),

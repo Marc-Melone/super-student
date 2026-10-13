@@ -6,6 +6,7 @@ section titles), so each hit can be cited precisely and read in full afterwards.
 
 from __future__ import annotations
 
+import heapq
 import re
 import sqlite3
 import threading
@@ -424,12 +425,14 @@ def search(lib, query: str, course: str = "", kind: str = "", limit: int = 10, p
                     # checked with every strategy from this one on, so a partial match isn't lost.
                     hit["_matches"].update(strategies[at:])
         # What's currently in the course comes first; copies of things removed from Canvas come after, labeled.
-        ranked = sorted(candidates.values(), key=lambda r: (r["removed"], r["match"] != "all words",
-                                                           -r["retrieval_score"]))
+        order = lambda r: (r["removed"], r["match"] != "all words", -r["retrieval_score"])
+        queue = [(order(hit), n, hit) for n, hit in enumerate(sorted(candidates.values(), key=order))]
         entries = _IndexEntries(conn)
         status: Dict[str, Tuple[Optional[Path], bool]] = {}     # path -> (current text version, index current)
         per_path: Dict[str, int] = {}
-        for hit in ranked:
+        rechecked = set()
+        while queue:
+            _, n, hit = heapq.heappop(queue)
             path = hit["path"]
             if per_path.get(path, 0) >= per_doc:
                 continue
@@ -443,8 +446,16 @@ def search(lib, query: str, course: str = "", kind: str = "", limit: int = 10, p
                     except (OSError, ValueError):
                         status[path] = (None, False)
             sidecar, fresh = status[path]
-            if sidecar is None or (not fresh and not current_text.matches(sidecar, path, hit)):
+            if sidecar is None:
                 continue
+            if not fresh and n not in rechecked:
+                indexed = hit["match"]
+                if not current_text.matches(sidecar, path, hit):
+                    continue
+                rechecked.add(n)
+                if hit["match"] != indexed:      # it matches fewer words now: rank it with the partial matches
+                    heapq.heappush(queue, (order(hit), n, hit))
+                    continue
             per_path[path] = per_path.get(path, 0) + 1
             hit.pop("_matches", None)
             hit["retrieval_score"] = round(hit["retrieval_score"], 6)
