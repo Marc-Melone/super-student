@@ -65,6 +65,11 @@ study them like someone who studied every slide: everything is converted to text
   an unselected module get status `out_of_scope`: out of practice, the review queue and results. Quotes need
   at least one two-character word after formatting is dropped ("**" was accepted). "The answer is a higher
   bond price" (lowercase "a" plus more words) is no longer read as option A.
+- Recheck of the 1.7.2 fixes (13 Oct 2026, not released yet): a quote needs at least two letters or digits
+  anywhere (so formulas like "F = m a" pass; "**", "." and "a" don't). The article exception in the answer-key
+  check only covers "answer is a …"/"answer: a …"; "option a", "choice a" and "answer a" are labels, and when
+  the answer's words point to no choice, "a" is read as option A. Search re-ranks a hit whose current text
+  matches fewer words than the index did (a heap in `index.search`), so it can't displace complete matches.
 - 1.7.0 adds a course/module exam workspace, connector-generated source-cited practice, in-app multiple
   choice and self-assessed written answers, saved attempts, spaced review priorities, and source-reference
   coverage. Scope remains student-selected and unconfirmed. Changed/unavailable sources disable affected
@@ -225,8 +230,8 @@ python tests/test_study.py          # 59
 python tests/test_gui.py            # 67 (app server; SUPERSTUDENT_APP_DRYRUN)
 python tests/test_openai.py         # 18 (needs the Codex CLI on PATH for the live part)
 python tests/test_high_priority.py  # 35 security and source-freshness regressions
-python tests/test_exam_retrieval.py # 72 retrieval, source-evidence and search-during-sync checks
-python tests/test_exams.py          # 58 exam state, scoring, scope, freshness, storage and answer-key checks
+python tests/test_exam_retrieval.py # 74 retrieval, source-evidence and search-during-sync checks
+python tests/test_exams.py          # 59 exam state, scoring, scope, freshness, storage and answer-key checks
 python tests/test_exam_workflow.py  # 4 real HTTP/MCP workflow tests, each with multiple assertions
 python tests/test_extraction_evidence.py # 24 extraction binding, ZIP, recording refresh and moved-file regressions
 python tests/test_freshness_cache.py # 25 the faster freshness checks: just as strict, unchanged files read once
