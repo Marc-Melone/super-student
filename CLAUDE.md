@@ -4,7 +4,7 @@ Super Student mirrors a student's Canvas courses into `~/SuperStudent` (the "lib
 study them like someone who studied every slide: everything is converted to text with citable locators
 (`## [Page 12]`, `## [Slide 7] Title`, `## [00:32:10]`), originals are kept for viewing as images, and a connector
 (MCP server) plus skills let the AI search, read, view pages and run a "study pass". It ships as a Mac app
-(non-technical students), a Terminal installer, and a CLI. Owner: Marc. Release version: 1.7.2.
+(non-technical students), a Terminal installer, and a CLI. Owner: Marc. Release version: 1.7.3.
 
 ## Working with Marc
 
@@ -14,7 +14,7 @@ study them like someone who studied every slide: everything is converted to text
 - Suggested effort: `high` for normal work on this codebase, `xhigh` for long unattended builds, `max` for
   independent reviews (especially anything touching the Canvas token).
 
-## Status (12 Oct 2026)
+## Status (14 Oct 2026)
 
 - 1.7.1 (8 Oct 2026) packages these fixes on top of 1.7.0 (PR #4). Its dependency pins are 1.7.0's, copied
   into the build unchanged, so only Super Student's own code changed; native Mac launch wasn't re-tested here:
@@ -65,7 +65,8 @@ study them like someone who studied every slide: everything is converted to text
   an unselected module get status `out_of_scope`: out of practice, the review queue and results. Quotes need
   at least one two-character word after formatting is dropped ("**" was accepted). "The answer is a higher
   bond price" (lowercase "a" plus more words) is no longer read as option A.
-- Recheck of the 1.7.2 fixes (13 Oct 2026, not released yet): a quote needs at least two letters or digits
+- 1.7.3 (14 Oct 2026, PR #10) packages these fixes from a recheck of 1.7.2, with 1.7.2's dependency pins copied
+  into the build unchanged; native Mac launch wasn't re-tested here: a quote needs at least two letters or digits
   anywhere (so formulas like "F = m a" pass; "**", "." and "a" don't). The article exception in the answer-key
   check only covers "answer is a …"/"answer: a …"; "option a", "choice a" and "answer a" are labels, and when
   the answer's words point to no choice, "a" is read as option A. Search re-ranks a hit whose current text
