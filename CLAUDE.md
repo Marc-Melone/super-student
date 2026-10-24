@@ -16,6 +16,9 @@ study them like someone who studied every slide: everything is converted to text
 
 ## Status (14 Oct 2026)
 
+- Pending release: answer-key checks accept inconclusive article phrases such as "a five percent increase"
+  for a "5%" choice without inferring option A. Explicit option labels and clear content contradictions still
+  reject the save batch; the supplied scoring key is preserved.
 - 1.7.1 (8 Oct 2026) packages these fixes on top of 1.7.0 (PR #4). Its dependency pins are 1.7.0's, copied
   into the build unchanged, so only Super Student's own code changed; native Mac launch wasn't re-tested here:
   - Search only reads the index again, so it answers while a sync writes it and no longer re-indexes or
@@ -232,7 +235,7 @@ python tests/test_gui.py            # 67 (app server; SUPERSTUDENT_APP_DRYRUN)
 python tests/test_openai.py         # 18 (needs the Codex CLI on PATH for the live part)
 python tests/test_high_priority.py  # 35 security and source-freshness regressions
 python tests/test_exam_retrieval.py # 74 retrieval, source-evidence and search-during-sync checks
-python tests/test_exams.py          # 59 exam state, scoring, scope, freshness, storage and answer-key checks
+python tests/test_exams.py          # 62 exam state, scoring, scope, freshness, storage and answer-key checks
 python tests/test_exam_workflow.py  # 4 real HTTP/MCP workflow tests, each with multiple assertions
 python tests/test_extraction_evidence.py # 24 extraction binding, ZIP, recording refresh and moved-file regressions
 python tests/test_freshness_cache.py # 25 the faster freshness checks: just as strict, unchanged files read once
