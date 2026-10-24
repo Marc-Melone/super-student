@@ -666,6 +666,67 @@ class ExamTests(unittest.TestCase):
                 result = exams.save_questions(self.lib, plan["id"], [self.question(answer=answer, topic=f"Keys {i}", **bond)])
                 self.assertTrue(result["ok"], result)
 
+    def test_spelled_numeric_article_answers_save_without_changing_scoring(self):
+        quote = "The annual growth rate is 5%, or five percent."
+        self.source.write_text(f"# Growth\n\n## [Page 1]\n\n{quote}\n")
+        plan = self.plan()
+        answers = ("The answer is a five percent increase.", "Answer: a five percent increase.",
+                   "The correct answer is a five percent increase.")
+        batch = [self.question(prompt=f"Growth scenario {i}: what is the annual growth rate?", topic="Growth",
+                               choices=["10%", "5%"], correct_index=1, answer=answer,
+                               explanation="Five percent is 5%.",
+                               citations=[{"path": self.path, "locator": "Page 1", "quote": quote}])
+                 for i, answer in enumerate(answers)]
+        saved = exams.save_questions(self.lib, plan["id"], batch)
+        self.assertTrue(saved["ok"], saved)
+        self.assertEqual(len(saved["question_ids"]), len(batch))
+        public = exams.get_plan(self.lib, plan["id"])["plan"]
+        self.assertEqual([q["answer"] for q in public["questions"]], list(answers))
+        self.assertEqual([q["correct_index"] for q in public["questions"]], [1] * len(batch))
+        qid = saved["question_ids"][0]
+        wrong = exams.record_attempt(self.lib, plan["id"], qid, choice_index=0)
+        self.assertTrue(wrong["ok"], wrong)
+        self.assertFalse(wrong["attempt"]["correct"])
+        right = exams.record_attempt(self.lib, plan["id"], qid, choice_index=1)
+        self.assertTrue(right["ok"], right)
+        self.assertTrue(right["attempt"]["correct"])
+        self.assertEqual(right["plan"]["metrics"]["first_attempt_mcq_accuracy"], 0)
+        self.assertEqual(right["plan"]["metrics"]["latest_mcq_accuracy"], 1)
+
+    def test_inconclusive_article_paraphrase_is_not_an_option_label(self):
+        quote = "The business made a profit: a positive bottom line."
+        self.source.write_text(f"# Results\n\n## [Page 1]\n\n{quote}\n")
+        plan = self.plan()
+        saved = exams.save_questions(self.lib, plan["id"], [self.question(
+            prompt="What financial result did the business report?", choices=["Loss", "Profit"], correct_index=1,
+            answer="The answer is a positive bottom line.", explanation="The business reported a profit.",
+            citations=[{"path": self.path, "locator": "Page 1", "quote": quote}])])
+        self.assertTrue(saved["ok"], saved)
+        self.assertEqual(len(saved["question_ids"]), 1)
+        self.assertEqual(exams.get_plan(self.lib, plan["id"])["plan"]["questions"][0]["correct_index"], 1)
+
+    def test_article_exception_preserves_batch_rejection_for_contradictory_keys(self):
+        quote = "The annual growth rate is 5%, or five percent."
+        self.source.write_text(f"# Growth\n\n## [Page 1]\n\n{quote}\n")
+        plan = self.plan()
+        valid = self.question(prompt="What is the annual growth rate?", choices=["10%", "5%"], correct_index=1,
+                              answer="The answer is a five percent increase.", explanation="Five percent is 5%.",
+                              citations=[{"path": self.path, "locator": "Page 1", "quote": quote}])
+        before = (self.lib.meta / "exams.json").read_bytes()
+        for answer in ("Option a is correct.", "Choice a is correct.", "Answer a is correct.",
+                       "The answer is (a)", "The answer is a.", "The answer is A because yields fell",
+                       "The answer is a because yields fell", "Answer: a because yields fell",
+                       "The answer is a 10% increase."):
+            with self.subTest(answer=answer):
+                result = exams.save_questions(self.lib, plan["id"],
+                                              [valid, dict(valid, prompt="A second growth question?", answer=answer)])
+                self.assertFalse(result["ok"], result)
+                self.assertIn("Answer key mismatch", result["message"])
+                self.assertEqual((self.lib.meta / "exams.json").read_bytes(), before)
+        public = exams.get_plan(self.lib, plan["id"])["plan"]
+        self.assertEqual(public["questions"], [])
+        self.assertEqual(public["attempts"], [])
+
     def test_review_progress_shows_when_the_answer_is_viewed_after_checking(self):
         """The app shows the worked answer after every quiz check. 1.7.0 then left every later attempt out of
         accuracy, so a question missed once and answered right on three later days still read 0%."""

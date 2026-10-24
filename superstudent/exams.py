@@ -24,7 +24,7 @@ import time
 import unicodedata
 import uuid
 from datetime import date, datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional
 from urllib.parse import unquote
 
 from .library import LibraryPathError, _try_lock, _unlock
@@ -812,41 +812,39 @@ def _mcq_key_problem(choices: List[str], correct: int, answer: str) -> Optional[
             letter = label.group("letter")
             # "The answer is a higher bond price", "Answer: a higher bond price": after "answer is" or "answer:",
             # a lowercase "a" followed by more words may be the article. "Option a is correct", "choice a",
-            # "answer a", "(a)", "a." and "The answer is A because ..." always name option A.
+            # "answer a", "(a)", "a." and "The answer is a because ..." still name option A.
             article = (letter == "a" and label.group("noun").casefold() == "answer" and label.group("link").strip() != ""
                        and stated[label.start("letter") - 1] != "("
-                       and re.match(r"\s+\w", stated[label.end("letter"):]) is not None)
+                       and re.match(r"\s+\w", stated[label.end("letter"):]) is not None
+                       and re.match(r"\s+because\b", stated[label.end("letter"):], re.I) is None)
     letter = letter.upper()
     index = ord(letter) - ord("A") if letter else -1
-    if label and 0 <= index < len(choices):
-        labelled = None if index == correct else f"the answer starts with option {letter}, which is choice {index}"
-        if not article:
-            return labelled
-        # The words decide when they point to a choice; when they don't, "a" is read as option A, as before.
-        points, problem = _content_key_problem(choices, correct, answer)
-        return problem if points else labelled
-    return _content_key_problem(choices, correct, answer)[1]
+    if label and 0 <= index < len(choices) and not article:
+        return None if index == correct else f"the answer starts with option {letter}, which is choice {index}"
+    # An article phrase may paraphrase a choice ("a five percent increase" for "5%"). If its words don't
+    # identify a choice, that is inconclusive, not evidence that it names option A. Keep the supplied key.
+    return _content_key_problem(choices, correct, answer)
 
 
-def _content_key_problem(choices: List[str], correct: int, answer: str) -> Tuple[bool, Optional[str]]:
-    """(whether the answer's words point to any choice, why they point to a different one than correct_index)."""
+def _content_key_problem(choices: List[str], correct: int, answer: str) -> Optional[str]:
+    """Why the answer's words point to a different choice, or None when consistent or inconclusive."""
     text = _key_text(answer)
     keys = [_key_text(c) for c in choices]
     named = {i for i, key in enumerate(keys) if key and re.search(r"(?<!\w)" + re.escape(key) + r"(?!\w)", text)}
     named = {i for i in named if not any(j != i and keys[i] in keys[j] and keys[i] != keys[j] for j in named)}
     if named == {correct}:
-        return True, None
+        return None
     if named and correct not in named:
         other = min(named)
-        return True, f"the answer names choice {other} ({choices[other]!r})"
+        return f"the answer names choice {other} ({choices[other]!r})"
     from .index import STOPWORDS
     words = lambda value: {w for w in re.findall(r"\w+", _key_text(value)) if w not in STOPWORDS}
     said = words(answer)
     scores = [(len(w & said) / len(w)) if w else 0.0 for w in map(words, choices)]
     best = max(range(len(choices)), key=lambda i: scores[i])
     if best != correct and scores[best] >= 0.6 and scores[best] - scores[correct] >= 0.3:
-        return True, f"the answer reads like choice {best} ({choices[best]!r})"
-    return bool(named) or scores[best] >= 0.6, None
+        return f"the answer reads like choice {best} ({choices[best]!r})"
+    return None
 
 
 def _validated_question(lib, plan, question, scope_rows, source_cache=None):
