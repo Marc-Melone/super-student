@@ -4,7 +4,7 @@ Super Student mirrors a student's Canvas courses into `~/SuperStudent` (the "lib
 study them like someone who studied every slide: everything is converted to text with citable locators
 (`## [Page 12]`, `## [Slide 7] Title`, `## [00:32:10]`), originals are kept for viewing as images, and a connector
 (MCP server) plus skills let the AI search, read, view pages and run a "study pass". It ships as a Mac app
-(non-technical students), a Terminal installer, and a CLI. Owner: Marc. Release version: 1.7.3.
+(non-technical students), a Terminal installer, and a CLI. Owner: Marc. Release version: 1.7.4.
 
 ## Working with Marc
 
@@ -14,11 +14,14 @@ study them like someone who studied every slide: everything is converted to text
 - Suggested effort: `high` for normal work on this codebase, `xhigh` for long unattended builds, `max` for
   independent reviews (especially anything touching the Canvas token).
 
-## Status (14 Oct 2026)
+## Status (24 Oct 2026)
 
-- Pending release: answer-key checks accept inconclusive article phrases such as "a five percent increase"
+- 1.7.4 packages PR #12: answer-key checks accept inconclusive article phrases such as "a five percent increase"
   for a "5%" choice without inferring option A. Explicit option labels and clear content contradictions still
-  reject the save batch; the supplied scoring key is preserved.
+  reject the save batch; the supplied scoring key is preserved. All 635 automated checks passed, with one
+  optional LibreOffice check skipped. The packaged wheel passed another 133 exam, HTTP/MCP and app-server
+  checks, and 34 independent package checks passed. Dependency and installer pins are copied unchanged
+  from 1.7.3; native Mac launch was not re-tested for this patch.
 - 1.7.1 (8 Oct 2026) packages these fixes on top of 1.7.0 (PR #4). Its dependency pins are 1.7.0's, copied
   into the build unchanged, so only Super Student's own code changed; native Mac launch wasn't re-tested here:
   - Search only reads the index again, so it answers while a sync writes it and no longer re-indexes or
